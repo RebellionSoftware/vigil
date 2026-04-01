@@ -1,0 +1,44 @@
+[workspace]
+members = [
+    "crates/vigil-core",
+    "crates/vigil-registry",
+    "crates/vigil-scan",
+    "crates/vigil-cli",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Vigil Contributors"]
+license = "MIT"
+
+[workspace.dependencies]
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Error handling
+thiserror = "2"
+miette = { version = "7", features = ["fancy"] }
+
+# Async
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# HTTP client
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# Semver
+semver = "1"
+
+# Internal crates
+vigil-core = { path = "crates/vigil-core" }
+vigil-registry = { path = "crates/vigil-registry" }
