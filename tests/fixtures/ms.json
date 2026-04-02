@@ -43,171 +43,481 @@
     "4.0.0-nightly.202508271359": "2025-08-27T14:00:01.232Z"
   },
   "versions": {
-    "4.0.0-nightly.202508270145": {
+    "2.1.1": {
       "name": "ms",
-      "version": "4.0.0-nightly.202508270145",
+      "version": "2.1.1",
       "dependencies": {},
       "dist": {
-        "integrity": "sha512-mkkx3hAchIiAh60+BIPv0Pq/0M58ufCxxC5fCwBOnu8SCqcI28agOS3zeYt1Ax3s1n1BFyYqxB8w3F8nYbYNEg==",
-        "shasum": "31db3000488e96b811e96f2cd62ceb91ca6aa220",
-        "tarball": "https://registry.npmjs.org/ms/-/ms-4.0.0-nightly.202508270145.tgz"
+        "integrity": "sha512-tgp+dl5cGk28utYktBsrFqA7HKgrhgPsg6Z/EfhWI4gl1Hwq8B/GmY/0oXZ6nF8hDVesS/FpnYaD/kOWhYQvyg==",
+        "shasum": "30a5864eb3ebb0a66f2ebe6d727af06a09d86e0a",
+        "tarball": "https://registry.npmjs.org/ms/-/ms-2.1.1.tgz"
       },
       "scripts": {
-        "attw": "pnpm build && attw --pack .",
-        "lint": "biome lint",
-        "test": "pnpm run test:nodejs && pnpm run test:edge",
-        "build": "tsdown",
-        "format": "biome format",
-        "precommit": "lint-staged",
-        "test:edge": "jest --env @edge-runtime/jest-environment --no-coverage",
-        "typecheck": "tsc --noEmit",
-        "test:nodejs": "jest --env node"
+        "lint": "eslint lib/* bin/*",
+        "test": "mocha tests.js",
+        "precommit": "lint-staged"
       },
       "hasInstallScript": false,
       "maintainers": [
         {
-          "name": "matheuss",
-          "email": "matheus.frndes@gmail.com"
+          "name": "leo",
+          "email": "leo@zeit.co"
         },
         {
           "name": "rauchg",
           "email": "rauchg@gmail.com"
-        },
-        {
-          "name": "nick.tracey",
-          "email": "nick.tracey@vercel.com"
-        },
-        {
-          "name": "vercel-release-bot",
-          "email": "infra+release@vercel.com"
-        },
-        {
-          "name": "zeit-bot",
-          "email": "team@zeit.co"
-        },
-        {
-          "name": "matt.straka",
-          "email": "matt.j.straka@gmail.com"
-        },
-        {
-          "name": "bkonkle",
-          "email": "brandon@konkle.us"
-        },
-        {
-          "name": "leo",
-          "email": "mindrun@icloud.com"
         }
       ]
     },
-    "4.0.0-nightly.202508271358": {
+    "2.1.2": {
       "name": "ms",
-      "version": "4.0.0-nightly.202508271358",
+      "version": "2.1.2",
       "dependencies": {},
       "dist": {
-        "integrity": "sha512-9BfkHoMNYiIm6m5eUuKJ9f02WWMuLsO0MqsvGdrCL7J2Cq3mEKmMBh7MAezHA7nCMx+j9FHhJviZqEuLliJJbw==",
-        "shasum": "fc7b154df5c3b8531815b1f29f16ddc6529c1f74",
-        "tarball": "https://registry.npmjs.org/ms/-/ms-4.0.0-nightly.202508271358.tgz"
+        "integrity": "sha512-sGkPx+VjMtmA6MX27oA4FBFELFCZZ4S4XqeGOXCv68tT+jb3vk/RyaKWP0PTKyWtmLSM0b+adUTEvbs1PEaH2w==",
+        "shasum": "d09d1f357b443f493382a8eb3ccd183872ae6009",
+        "tarball": "https://registry.npmjs.org/ms/-/ms-2.1.2.tgz"
       },
       "scripts": {
-        "attw": "pnpm build && attw --pack .",
-        "lint": "biome lint",
-        "test": "pnpm run test:nodejs && pnpm run test:edge",
-        "build": "tsdown",
-        "format": "biome format",
-        "precommit": "lint-staged",
-        "test:edge": "jest --env @edge-runtime/jest-environment --no-coverage",
-        "typecheck": "tsc --noEmit",
-        "test:nodejs": "jest --env node"
+        "lint": "eslint lib/* bin/*",
+        "test": "mocha tests.js",
+        "precommit": "lint-staged"
       },
       "hasInstallScript": false,
       "maintainers": [
         {
+          "name": "alexaltea",
+          "email": "alexandro@phi.nz"
+        },
+        {
+          "name": "anatrajkovska",
+          "email": "ana.trajkovska2015@gmail.com"
+        },
+        {
+          "name": "andybitz",
+          "email": "artzbitz@gmail.com"
+        },
+        {
+          "name": "arunoda",
+          "email": "arunoda.susiripala@gmail.com"
+        },
+        {
+          "name": "arzafran",
+          "email": "franco@basement.studio"
+        },
+        {
+          "name": "atcastle",
+          "email": "atcastle@gmail.com"
+        },
+        {
+          "name": "b3nnyl",
+          "email": "ciao@sylin.me"
+        },
+        {
+          "name": "caarlos0",
+          "email": "caarlos0@gmail.com"
+        },
+        {
+          "name": "codetheory",
+          "email": "thecodetheory@gmail.com"
+        },
+        {
+          "name": "coetry",
+          "email": "allenhai03@gmail.com"
+        },
+        {
+          "name": "dav-is",
+          "email": "mail@connordav.is"
+        },
+        {
+          "name": "fivepointseven",
+          "email": "fivepointseven@icloud.com"
+        },
+        {
+          "name": "guybedford",
+          "email": "guybedford@gmail.com"
+        },
+        {
+          "name": "hharnisc",
+          "email": "hharnisc@gmail.com"
+        },
+        {
+          "name": "huvik",
+          "email": "lukas@huvar.cz"
+        },
+        {
+          "name": "iamevilrabbit",
+          "email": "hello@evilrabb.it"
+        },
+        {
+          "name": "igorklopov",
+          "email": "igor@klopov.com"
+        },
+        {
+          "name": "ijjk",
+          "email": "jj@jjsweb.site"
+        },
+        {
+          "name": "janicklas-ralph",
+          "email": "janicklasralph036@gmail.com"
+        },
+        {
+          "name": "javivelasco",
+          "email": "javier.velasco86@gmail.com"
+        },
+        {
+          "name": "joecohens",
+          "email": "joecohenr@gmail.com"
+        },
+        {
+          "name": "juancampa",
+          "email": "juancampa@gmail.com"
+        },
+        {
+          "name": "leo",
+          "email": "leo@zeit.co"
+        },
+        {
+          "name": "lfades",
+          "email": "luisito453@gmail.com"
+        },
+        {
+          "name": "lucleray",
+          "email": "luc.leray@gmail.com"
+        },
+        {
+          "name": "manovotny",
+          "email": "manovotny@gmail.com"
+        },
+        {
+          "name": "marcosnils",
+          "email": "marcosnils@gmail.com"
+        },
+        {
           "name": "matheuss",
-          "email": "matheus.frndes@gmail.com"
+          "email": "me@matheus.top"
+        },
+        {
+          "name": "mfix22",
+          "email": "mrfix84@gmail.com"
+        },
+        {
+          "name": "mglagola",
+          "email": "mark.glagola@gmail.com"
+        },
+        {
+          "name": "msweeneydev",
+          "email": "mail@msweeneydev.com"
+        },
+        {
+          "name": "nkzawa",
+          "email": "naoyuki.kanezawa@gmail.com"
+        },
+        {
+          "name": "olliv",
+          "email": "olli@zeit.co"
+        },
+        {
+          "name": "paco",
+          "email": "pvco.coursey@gmail.com"
+        },
+        {
+          "name": "paulogdm",
+          "email": "paulogdemitri@gmail.com"
+        },
+        {
+          "name": "quietshu",
+          "email": "ds303077135@gmail.com"
+        },
+        {
+          "name": "rabaut",
+          "email": "rabautse@gmail.com"
+        },
+        {
+          "name": "ragojose",
+          "email": "ragojosefrancisco@gmail.com"
         },
         {
           "name": "rauchg",
           "email": "rauchg@gmail.com"
         },
         {
-          "name": "nick.tracey",
-          "email": "nick.tracey@vercel.com"
+          "name": "sarupbanskota",
+          "email": "sbanskota08@gmail.com"
         },
         {
-          "name": "vercel-release-bot",
-          "email": "infra+release@vercel.com"
+          "name": "skllcrn",
+          "email": "skllcrn@zeit.co"
+        },
+        {
+          "name": "sophearak",
+          "email": "t.sophearak@gmail.com"
+        },
+        {
+          "name": "styfle",
+          "email": "steven@ceriously.com"
+        },
+        {
+          "name": "timer",
+          "email": "timer150@gmail.com"
+        },
+        {
+          "name": "timneutkens",
+          "email": "tim@timneutkens.nl"
+        },
+        {
+          "name": "tootallnate",
+          "email": "nathan@tootallnate.net"
+        },
+        {
+          "name": "umegaya",
+          "email": "iyatomi@gmail.com"
+        },
+        {
+          "name": "williamli",
+          "email": "williamli@bbi.io"
         },
         {
           "name": "zeit-bot",
           "email": "team@zeit.co"
-        },
-        {
-          "name": "matt.straka",
-          "email": "matt.j.straka@gmail.com"
-        },
-        {
-          "name": "bkonkle",
-          "email": "brandon@konkle.us"
-        },
-        {
-          "name": "leo",
-          "email": "mindrun@icloud.com"
         }
       ]
     },
-    "4.0.0-nightly.202508271359": {
+    "2.1.3": {
       "name": "ms",
-      "version": "4.0.0-nightly.202508271359",
+      "version": "2.1.3",
       "dependencies": {},
       "dist": {
-        "integrity": "sha512-WC/Eo7NzFrOV/RRrTaI0fxKVbNCzEy76j2VqNV8SxDf9D69gSE2Lh0QwYvDlhiYmheBYExAvEAxVf5NoN0cj2A==",
-        "shasum": "8ece37f3e9335e111417e5eecd1e4e89a904b6ad",
-        "tarball": "https://registry.npmjs.org/ms/-/ms-4.0.0-nightly.202508271359.tgz"
+        "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
+        "shasum": "574c8138ce1d2b5861f0b44579dbadd60c6615b2",
+        "tarball": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz"
       },
       "scripts": {
-        "attw": "pnpm build && attw --pack --profile esm-only .",
-        "lint": "biome lint",
-        "test": "pnpm run test:nodejs && pnpm run test:edge",
-        "build": "tsdown",
-        "format": "biome format",
-        "precommit": "lint-staged",
-        "test:edge": "jest --env @edge-runtime/jest-environment --no-coverage",
-        "typecheck": "tsc --noEmit",
-        "test:nodejs": "jest --env node"
+        "lint": "eslint lib/* bin/*",
+        "test": "mocha tests.js",
+        "precommit": "lint-staged"
       },
       "hasInstallScript": false,
       "maintainers": [
         {
-          "name": "matheuss",
-          "email": "matheus.frndes@gmail.com"
+          "name": "elsigh",
+          "email": "lsimon@commoner.com"
         },
         {
-          "name": "rauchg",
-          "email": "rauchg@gmail.com"
+          "name": "leerobinson",
+          "email": "lrobinson2011@gmail.com"
         },
         {
-          "name": "nick.tracey",
-          "email": "nick.tracey@vercel.com"
+          "name": "hankvercel",
+          "email": "hank@vercel.com"
         },
         {
-          "name": "vercel-release-bot",
-          "email": "infra+release@vercel.com"
+          "name": "okbel",
+          "email": "belen@vercel.com"
+        },
+        {
+          "name": "samsisle",
+          "email": "samko9522@gmail.com"
+        },
+        {
+          "name": "cleishm",
+          "email": "chris@leishman.org"
+        },
+        {
+          "name": "nazarenooviedo",
+          "email": "nazareno@basement.studio"
+        },
+        {
+          "name": "chibicode",
+          "email": "shu@chibicode.com"
+        },
+        {
+          "name": "gielcobben",
+          "email": "g.cobben@gmail.com"
+        },
+        {
+          "name": "jaredpalmer",
+          "email": "jared@palmer.net"
+        },
+        {
+          "name": "jkrems",
+          "email": "jan.krems@gmail.com"
+        },
+        {
+          "name": "prateekbh",
+          "email": "prateek89born@gmail.com"
+        },
+        {
+          "name": "kikobeats",
+          "email": "josefrancisco.verdu@gmail.com"
+        },
+        {
+          "name": "gmonaco",
+          "email": "gbmonaco@google.com"
+        },
+        {
+          "name": "housseindjirdeh",
+          "email": "houssein.djirdeh@gmail.com"
+        },
+        {
+          "name": "developit",
+          "email": "jason@developit.ca"
+        },
+        {
+          "name": "spanicker",
+          "email": "shubhie@gmail.com"
+        },
+        {
+          "name": "keanulee",
+          "email": "npm@keanulee.com"
+        },
+        {
+          "name": "atcastle",
+          "email": "atcastle@gmail.com"
+        },
+        {
+          "name": "janicklas-ralph",
+          "email": "janicklasralph036@gmail.com"
+        },
+        {
+          "name": "skllcrn",
+          "email": "skllcrn@zeit.co"
+        },
+        {
+          "name": "paco",
+          "email": "pvco.coursey@gmail.com"
+        },
+        {
+          "name": "guybedford",
+          "email": "guybedford@gmail.com"
+        },
+        {
+          "name": "ragojose",
+          "email": "ragojosefrancisco@gmail.com"
+        },
+        {
+          "name": "williamli",
+          "email": "williamli@bbi.io"
+        },
+        {
+          "name": "msweeneydev",
+          "email": "mail@msweeneydev.com"
+        },
+        {
+          "name": "coetry",
+          "email": "allenhai03@gmail.com"
+        },
+        {
+          "name": "rabaut",
+          "email": "rabautse@gmail.com"
+        },
+        {
+          "name": "lfades",
+          "email": "luisito453@gmail.com"
+        },
+        {
+          "name": "mfix22",
+          "email": "mrfix84@gmail.com"
+        },
+        {
+          "name": "ijjk",
+          "email": "jj@jjsweb.site"
+        },
+        {
+          "name": "arzafran",
+          "email": "franco@basement.studio"
+        },
+        {
+          "name": "umegaya",
+          "email": "iyatomi@gmail.com"
+        },
+        {
+          "name": "timer",
+          "email": "timer150@gmail.com"
+        },
+        {
+          "name": "anatrajkovska",
+          "email": "ana.trajkovska2015@gmail.com"
+        },
+        {
+          "name": "paulogdm",
+          "email": "paulogdemitri@gmail.com"
+        },
+        {
+          "name": "andybitz",
+          "email": "artzbitz@gmail.com"
+        },
+        {
+          "name": "mglagola",
+          "email": "mark.glagola@gmail.com"
+        },
+        {
+          "name": "lucleray",
+          "email": "luc.leray@gmail.com"
         },
         {
           "name": "zeit-bot",
           "email": "team@zeit.co"
         },
         {
-          "name": "matt.straka",
-          "email": "matt.j.straka@gmail.com"
+          "name": "styfle",
+          "email": "steven@ceriously.com"
         },
         {
-          "name": "bkonkle",
-          "email": "brandon@konkle.us"
+          "name": "juancampa",
+          "email": "juancampa@gmail.com"
+        },
+        {
+          "name": "dav-is",
+          "email": "mail@connordav.is"
+        },
+        {
+          "name": "quietshu",
+          "email": "ds303077135@gmail.com"
+        },
+        {
+          "name": "joecohens",
+          "email": "joecohenr@gmail.com"
+        },
+        {
+          "name": "codetheory",
+          "email": "thecodetheory@gmail.com"
+        },
+        {
+          "name": "matheuss",
+          "email": "matheus.frndes@gmail.com"
+        },
+        {
+          "name": "igorklopov",
+          "email": "igor@klopov.com"
         },
         {
           "name": "leo",
           "email": "mindrun@icloud.com"
+        },
+        {
+          "name": "nkzawa",
+          "email": "naoyuki.kanezawa@gmail.com"
+        },
+        {
+          "name": "tootallnate",
+          "email": "nathan@tootallnate.net"
+        },
+        {
+          "name": "rauchg",
+          "email": "rauchg@gmail.com"
+        },
+        {
+          "name": "timneutkens",
+          "email": "tim@timneutkens.nl"
+        },
+        {
+          "name": "javivelasco",
+          "email": "javier.velasco86@gmail.com"
+        },
+        {
+          "name": "iamevilrabbit",
+          "email": "hello@evilrabb.it"
         }
       ]
     }

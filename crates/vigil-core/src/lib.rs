@@ -1,6 +1,9 @@
 pub mod config;
 pub mod error;
 pub mod lockfile;
+pub mod overrides;
+pub mod package_json;
+pub mod policy;
 pub mod registry;
 pub mod resolver;
 pub mod semver_resolve;
@@ -8,7 +11,10 @@ pub mod types;
 
 pub use config::VigilConfig;
 pub use error::{Error, Result};
-pub use lockfile::VigilLockfile;
+pub use lockfile::{LockfileDiff, LockedPackage, VigilLockfile};
+pub use lockfile::{diff as lockfile_diff, generate_from_tree, merge_into};
+pub use overrides::{DriftEntry, DriftIssue, OverridesManager};
 pub use registry::{RegistryClient, RegistryError, PackageMetadata, VersionMetadata};
+pub use policy::{CheckOutcome, CheckResult, PolicyEngine, TreeCheckReport};
 pub use resolver::{DependencyResolver, ResolvedNode, ResolvedTree};
 pub use types::{ContentHash, ExactVersion, PackageName, PackageSpec};

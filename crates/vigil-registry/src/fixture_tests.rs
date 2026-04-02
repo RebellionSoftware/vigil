@@ -52,6 +52,41 @@ mod fixture_tests {
     }
 
     #[tokio::test]
+    async fn debug_fixture_has_ms_dependency() {
+        if !fixture_exists("debug") {
+            eprintln!("Skipping: tests/fixtures/debug.json not found");
+            return;
+        }
+        let mut client = MockRegistryClient::new();
+        client.add_fixture(&fixtures_dir(), "debug").unwrap();
+        let meta = client.get_package_metadata("debug").await.unwrap();
+        assert_eq!(meta.name, "debug");
+        let latest = meta.latest_version().unwrap();
+        let vm = meta.versions.get(latest).unwrap();
+        assert!(
+            vm.dependencies.contains_key("ms"),
+            "debug@{latest} should depend on ms, got deps: {:?}", vm.dependencies.keys().collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn ms_fixture_has_stable_versions() {
+        if !fixture_exists("ms") {
+            eprintln!("Skipping: tests/fixtures/ms.json not found");
+            return;
+        }
+        let mut client = MockRegistryClient::new();
+        client.add_fixture(&fixtures_dir(), "ms").unwrap();
+        let meta = client.get_package_metadata("ms").await.unwrap();
+        let latest = meta.latest_version().unwrap();
+        // latest should be in the versions map (pre-release-only capture was a bug)
+        assert!(
+            meta.versions.contains_key(latest),
+            "ms latest ({latest}) should be in versions map"
+        );
+    }
+
+    #[tokio::test]
     async fn esbuild_has_postinstall() {
         if !fixture_exists("esbuild") {
             eprintln!("Skipping: tests/fixtures/esbuild.json not found");

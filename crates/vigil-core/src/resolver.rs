@@ -311,6 +311,7 @@ mod tests {
             entry.versions.insert(version.to_string(), vm);
         }
 
+        #[allow(dead_code)]
         fn total_fetches(&self) -> usize {
             self.fetch_counts.lock().unwrap().values().sum()
         }
