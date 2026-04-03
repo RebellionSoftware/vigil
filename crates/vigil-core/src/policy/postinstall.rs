@@ -1,5 +1,5 @@
 use crate::{
-    config::PolicyConfig,
+    config::{BypassConfig, PolicyConfig},
     lockfile::VigilLockfile,
     policy::{CheckOutcome, CheckResult},
     resolver::ResolvedNode,
@@ -13,6 +13,7 @@ use crate::{
 pub fn check(
     node: &ResolvedNode,
     _config: &PolicyConfig,
+    bypass: &BypassConfig,
     lockfile: Option<&VigilLockfile>,
 ) -> Vec<CheckResult> {
     if !node.has_install_script && !node.metadata.has_postinstall() {
@@ -32,12 +33,16 @@ pub fn check(
         script_types.join(", ")
     };
 
-    // Check if this package was previously approved in the lockfile
+    let name = node.spec.name.to_string();
+
+    // Approved via vigil.toml [bypass] allow_postinstall (pre-install trust)
+    // or via vigil.lock postinstall_approved (post-install trust).
     let key = node.spec.to_key();
-    let approved = lockfile
-        .and_then(|lf| lf.packages.get(&key))
-        .map(|pkg| pkg.postinstall_approved)
-        .unwrap_or(false);
+    let approved = bypass.allow_postinstall.contains(&name)
+        || lockfile
+            .and_then(|lf| lf.packages.get(&key))
+            .map(|pkg| pkg.postinstall_approved)
+            .unwrap_or(false);
 
     let outcome = if approved {
         CheckOutcome::Passed
@@ -65,7 +70,7 @@ pub fn check(
 mod tests {
     use super::*;
     use crate::{
-        config::PolicyConfig,
+        config::{BypassConfig, PolicyConfig},
         lockfile::{LockedPackage, VigilLockfile},
         registry::{DistInfo, VersionMetadata},
         resolver::ResolvedNode,
@@ -124,14 +129,14 @@ mod tests {
     #[test]
     fn clean_package_returns_no_results() {
         let node = make_node("ms", &[], false);
-        let results = check(&node, &PolicyConfig::default(), None);
+        let results = check(&node, &PolicyConfig::default(), &BypassConfig::default(), None);
         assert!(results.is_empty());
     }
 
     #[test]
     fn postinstall_script_blocks() {
         let node = make_node("esbuild", &["postinstall"], false);
-        let results = check(&node, &PolicyConfig::default(), None);
+        let results = check(&node, &PolicyConfig::default(), &BypassConfig::default(), None);
         assert_eq!(results.len(), 1);
         assert!(results[0].outcome.is_blocked());
         match &results[0].outcome {
@@ -145,7 +150,7 @@ mod tests {
     #[test]
     fn preinstall_script_blocks() {
         let node = make_node("pkg", &["preinstall"], false);
-        let results = check(&node, &PolicyConfig::default(), None);
+        let results = check(&node, &PolicyConfig::default(), &BypassConfig::default(), None);
         assert_eq!(results.len(), 1);
         assert!(results[0].outcome.is_blocked());
     }
@@ -153,7 +158,7 @@ mod tests {
     #[test]
     fn has_install_script_flag_blocks() {
         let node = make_node("pkg", &[], true); // flag set but no named scripts
-        let results = check(&node, &PolicyConfig::default(), None);
+        let results = check(&node, &PolicyConfig::default(), &BypassConfig::default(), None);
         assert_eq!(results.len(), 1);
         assert!(results[0].outcome.is_blocked());
         match &results[0].outcome {
@@ -168,7 +173,7 @@ mod tests {
     fn approved_in_lockfile_passes() {
         let node = make_node("esbuild", &["postinstall"], false);
         let lf = lockfile_with_approval("esbuild@1.0.0");
-        let results = check(&node, &PolicyConfig::default(), Some(&lf));
+        let results = check(&node, &PolicyConfig::default(), &BypassConfig::default(), Some(&lf));
         assert_eq!(results.len(), 1);
         assert!(results[0].outcome.is_passed(), "should pass with lockfile approval");
     }
@@ -178,15 +183,27 @@ mod tests {
         let node = make_node("esbuild", &["postinstall"], false);
         // Lockfile exists but postinstall_approved = false (default)
         let lf = VigilLockfile::new();
-        let results = check(&node, &PolicyConfig::default(), Some(&lf));
+        let results = check(&node, &PolicyConfig::default(), &BypassConfig::default(), Some(&lf));
         assert_eq!(results.len(), 1);
         assert!(results[0].outcome.is_blocked());
     }
 
     #[test]
+    fn bypass_allow_postinstall_passes() {
+        let node = make_node("esbuild", &["postinstall"], false);
+        let bypass = BypassConfig {
+            allow_postinstall: vec!["esbuild".to_string()],
+            ..Default::default()
+        };
+        let results = check(&node, &PolicyConfig::default(), &bypass, None);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].outcome.is_passed(), "bypass.allow_postinstall should pass");
+    }
+
+    #[test]
     fn reason_includes_trust_command() {
         let node = make_node("esbuild", &["postinstall"], false);
-        let results = check(&node, &PolicyConfig::default(), None);
+        let results = check(&node, &PolicyConfig::default(), &BypassConfig::default(), None);
         match &results[0].outcome {
             CheckOutcome::Blocked { reason } => {
                 assert!(reason.contains("vigil trust"), "should mention trust command: {reason}");

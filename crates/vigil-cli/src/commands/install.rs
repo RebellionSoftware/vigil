@@ -28,6 +28,20 @@ pub struct InstallArgs {
     pub reason: Option<String>,
 }
 
+/// Return the package name portion of a specifier, stripping any version suffix.
+/// Handles both unscoped ("ms@2.1.3" → "ms") and scoped ("@types/node@20" → "@types/node").
+fn pkg_base_name(spec: &str) -> &str {
+    if spec.starts_with('@') {
+        // Find the '@' after the slash (version separator), if any
+        match spec[1..].find('@') {
+            Some(idx) => &spec[..idx + 1],
+            None => spec,
+        }
+    } else {
+        spec.split('@').next().unwrap_or(spec)
+    }
+}
+
 pub async fn run(args: InstallArgs) -> miette::Result<()> {
     let project_dir = env::current_dir()
         .map_err(|e| miette::miette!("cannot determine current directory: {e}"))?;
@@ -44,9 +58,29 @@ pub async fn run(args: InstallArgs) -> miette::Result<()> {
     let registry = NpmRegistryClient::new();
     let mut resolver = DependencyResolver::new(registry, config.policy.clone());
 
+    // Resolve ALL direct packages: existing ones pinned at current version + newly requested.
+    // This ensures the lockfile always contains the complete set of directs, not just the
+    // ones named in this invocation.
+    let mut all_specs: Vec<String> = Vec::new();
+    if let Some(ref existing) = existing_lockfile {
+        for (key, pkg) in &existing.packages {
+            if pkg.direct {
+                all_specs.push(key.clone()); // "name@version" — exact pin
+            }
+        }
+    }
+    // New packages override any existing entry with the same base name.
+    for new_pkg in &args.packages {
+        let new_base = pkg_base_name(new_pkg);
+        all_specs.retain(|s| {
+            s.rsplit_once('@').map(|(n, _)| n).unwrap_or(s.as_str()) != new_base
+        });
+        all_specs.push(new_pkg.clone());
+    }
+
     eprintln!("Resolving {}…", args.packages.join(", "));
 
-    let pkg_refs: Vec<&str> = args.packages.iter().map(|s| s.as_str()).collect();
+    let pkg_refs: Vec<&str> = all_specs.iter().map(|s| s.as_str()).collect();
     let tree = resolver
         .resolve(&pkg_refs)
         .await
@@ -80,12 +114,24 @@ pub async fn run(args: InstallArgs) -> miette::Result<()> {
         new_lockfile
     };
 
-    // ── 6. Write overrides to package.json ───────────────────────────────────
+    // ── 6. Apply pre-approved postinstall trust from vigil.toml bypass config ─
+    // Packages in [bypass] allow_postinstall were trusted before install; mark
+    // them approved in the lockfile so subsequent verify/update don't re-block.
+    for pkg_name in &config.bypass.allow_postinstall {
+        for (key, pkg) in lockfile.packages.iter_mut() {
+            let key_name = key.rsplit_once('@').map(|(n, _)| n).unwrap_or(key.as_str());
+            if key_name == pkg_name.as_str() {
+                pkg.postinstall_approved = true;
+            }
+        }
+    }
+
+    // ── 7. Write overrides to package.json ───────────────────────────────────
     let overrides = OverridesManager::generate_overrides(&lockfile);
     OverridesManager::write_overrides(&project_dir, &overrides)
         .map_err(|e| miette::miette!("failed to update package.json overrides: {e}"))?;
 
-    // ── 7. Run bun add ────────────────────────────────────────────────────────
+    // ── 8. Run bun add ────────────────────────────────────────────────────────
     let bun = BunRunner::new(&project_dir)
         .map_err(|e| miette::miette!("{e}"))?;
 
@@ -95,14 +141,18 @@ pub async fn run(args: InstallArgs) -> miette::Result<()> {
         .map(|n| n.spec.clone())
         .collect();
 
-    let ignore_scripts = config.policy.block_postinstall;
+    // Suppress lifecycle scripts unless at least one package has approved postinstall.
+    // This covers both lockfile-approved (prior trust) and config-approved (pre-trust).
+    let any_approved = lockfile.packages.values().any(|p| p.postinstall_approved)
+        || !config.bypass.allow_postinstall.is_empty();
+    let ignore_scripts = config.policy.block_postinstall && !any_approved;
 
     eprintln!("Running bun add…");
     bun.add(&direct_specs, ignore_scripts)
         .await
         .map_err(|e| miette::miette!("bun failed: {e}"))?;
 
-    // ── 8. Hash installed packages and update lockfile ────────────────────────
+    // ── 9. Hash installed packages and update lockfile ────────────────────────
     let node_modules = project_dir.join("node_modules");
 
     for node in tree.all_nodes() {
@@ -119,13 +169,13 @@ pub async fn run(args: InstallArgs) -> miette::Result<()> {
         }
     }
 
-    // ── 9. Write vigil.lock (with config hash for integrity tracking) ─────────
+    // ── 10. Write vigil.lock (with config hash for integrity tracking) ────────
     lockfile.meta.config_hash = config_hash;
     lockfile
         .write(&project_dir)
         .map_err(|e| miette::miette!("failed to write vigil.lock: {e}"))?;
 
-    // ── 10. Append audit log entries ──────────────────────────────────────────
+    // ── 11. Append audit log entries ──────────────────────────────────────────
     let audit = AuditLog::new(&project_dir);
 
     for node in tree.all_nodes() {
@@ -158,7 +208,7 @@ pub async fn run(args: InstallArgs) -> miette::Result<()> {
         }
     }
 
-    // ── 11. Print success ─────────────────────────────────────────────────────
+    // ── 12. Print success ─────────────────────────────────────────────────────
     output::print_install_success(tree.nodes.len());
 
     Ok(())

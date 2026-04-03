@@ -154,7 +154,7 @@ impl PolicyEngine {
 
         // Postinstall blocking
         if self.config.block_postinstall {
-            results.extend(postinstall::check(node, &self.config, lockfile));
+            results.extend(postinstall::check(node, &self.config, &self.bypass, lockfile));
         }
 
         results
@@ -248,7 +248,7 @@ mod tests {
     fn postinstall_blocks_when_present() {
         let engine = default_engine();
         let node = make_node_with_postinstall("esbuild", "0.19.0", true);
-        let results = postinstall::check(&node, &engine.config, None);
+        let results = postinstall::check(&node, &engine.config, &engine.bypass, None);
         assert!(results.iter().any(|r| r.outcome.is_blocked()));
     }
 
@@ -256,7 +256,7 @@ mod tests {
     fn postinstall_passes_clean_package() {
         let engine = default_engine();
         let node = make_node("ms", "2.1.3", 30, true);
-        let results = postinstall::check(&node, &engine.config, None);
+        let results = postinstall::check(&node, &engine.config, &engine.bypass, None);
         assert!(results.is_empty() || results.iter().all(|r| r.outcome.is_passed()));
     }
 
@@ -318,6 +318,7 @@ mod tests {
 
         let bypass = BypassConfig {
             allow_fresh: vec!["trusted-pkg".to_string()],
+            allow_postinstall: vec![],
         };
         let engine = PolicyEngine::new(PolicyConfig::default(), bypass, BlockedConfig::default());
 

@@ -1733,6 +1733,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "toml",
  "vigil-core",
  "vigil-registry",
  "whoami",

@@ -30,8 +30,12 @@ pub fn resolve_version(
         range.to_string()
     };
 
+    // npm uses space-separated multiple constraints: ">= 2.1.2 < 3.0.0"
+    // The Rust semver crate expects comma-separated:  ">=2.1.2, <3.0.0"
+    let normalized = normalize_npm_range(&normalized);
+
     // Parse as a semver requirement. npm uses some shorthand that semver crate handles:
-    // ^1.2.3, ~1.2.3, >=1.2.0 <2.0.0, 1.2.x, etc.
+    // ^1.2.3, ~1.2.3, >=1.2.0, <2.0.0, 1.2.x, etc.
     let req = VersionReq::parse(&normalized).map_err(|e| RegistryError::SemverParse {
         input: range.to_string(),
         reason: e.to_string(),
@@ -63,6 +67,43 @@ pub fn resolve_version(
         package: String::new(),
         range: range.to_string(),
     })
+}
+
+/// Normalize npm-style range strings to what the Rust semver crate accepts.
+///
+/// npm uses space to AND multiple constraints: `">= 2.1.2 < 3.0.0"`
+/// The semver crate expects comma-separated:   `">=2.1.2, <3.0.0"`
+///
+/// Strategy: scan tokens; when a token starts with a comparison operator
+/// and the accumulator is non-empty, flush the accumulator and start a new
+/// requirement. Handles ranges like `">= 1.0.0 < 2.0.0"` and plain `"^1.0"`.
+fn normalize_npm_range(range: &str) -> String {
+    let starts_with_op =
+        |s: &str| matches!(s.chars().next(), Some('>' | '<' | '=' | '~' | '^'));
+
+    let mut requirements: Vec<String> = Vec::new();
+    let mut current = String::new();
+
+    for token in range.split_whitespace() {
+        if starts_with_op(token) && !current.is_empty() {
+            requirements.push(current.trim().to_string());
+            current = token.to_string();
+        } else {
+            if !current.is_empty() {
+                current.push(' ');
+            }
+            current.push_str(token);
+        }
+    }
+    if !current.trim().is_empty() {
+        requirements.push(current.trim().to_string());
+    }
+
+    if requirements.len() <= 1 {
+        range.to_string() // nothing to join — return original
+    } else {
+        requirements.join(", ")
+    }
 }
 
 /// Returns true if the string looks like a bare exact version (digits and dots only, no operators).
@@ -171,6 +212,19 @@ mod tests {
     fn no_match_errors() {
         let result = resolve_version("^99.0.0", VERSIONS, false);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn npm_space_separated_range() {
+        // Express uses this style for several deps
+        let v = resolve_version(">= 2.0.0 < 3.0.0", VERSIONS, false).unwrap();
+        assert_eq!(v, "2.1.0", ">= 2.0.0 < 3.0.0 should resolve to highest 2.x");
+    }
+
+    #[test]
+    fn npm_space_separated_range_with_patch() {
+        let v = resolve_version(">= 1.2.0 < 2.0.0", VERSIONS, false).unwrap();
+        assert_eq!(v, "1.2.3");
     }
 
     #[test]

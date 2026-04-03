@@ -114,6 +114,12 @@ pub struct BypassConfig {
     /// Packages permanently exempt from the age gate.
     #[serde(default)]
     pub allow_fresh: Vec<String>,
+
+    /// Packages pre-approved to run postinstall scripts.
+    /// Written by `vigil trust <pkg> --allow postinstall` when the package
+    /// is not yet installed. Once installed, approval moves to vigil.lock.
+    #[serde(default)]
+    pub allow_postinstall: Vec<String>,
 }
 
 /// Blocked packages — can never be installed regardless of policy.

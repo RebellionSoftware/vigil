@@ -1,6 +1,6 @@
 use clap::Args;
 use std::env;
-use vigil_core::lockfile::VigilLockfile;
+use vigil_core::{config::VigilConfig, lockfile::VigilLockfile};
 use owo_colors::OwoColorize;
 
 use crate::audit_log::{AuditEntry, AuditLog};
@@ -35,27 +35,52 @@ pub async fn run(args: TrustArgs) -> miette::Result<()> {
     let project_dir = env::current_dir()
         .map_err(|e| miette::miette!("cannot determine current directory: {e}"))?;
 
-    let mut lockfile = VigilLockfile::read(&project_dir)
-        .map_err(|e| miette::miette!(
-            "vigil.lock not found — run `vigil install` first: {e}"
-        ))?;
+    // If the package is not yet installed (common when block_postinstall blocks the first
+    // install), store the approval in vigil.toml [bypass] allow_postinstall so the next
+    // `vigil install` can proceed.
+    let lockfile_opt = VigilLockfile::read_optional(&project_dir)
+        .map_err(|e| miette::miette!("failed to read vigil.lock: {e}"))?;
 
-    // Find the entry for this package (direct or transitive).
-    let matched_keys: Vec<String> = lockfile
-        .packages
-        .keys()
-        .filter(|k| {
-            k.rsplit_once('@').map(|(name, _)| name) == Some(args.package.as_str())
-        })
-        .cloned()
-        .collect();
+    let matched_keys: Vec<String> = lockfile_opt.as_ref().map(|lf| {
+        lf.packages
+            .keys()
+            .filter(|k| k.rsplit_once('@').map(|(n, _)| n) == Some(args.package.as_str()))
+            .cloned()
+            .collect()
+    }).unwrap_or_default();
 
+    // Package not yet installed — write a pre-approval to vigil.toml instead.
     if matched_keys.is_empty() {
+        if args.allow.contains(&PERMISSION_POSTINSTALL.to_string()) {
+            let mut config = VigilConfig::load(&project_dir)
+                .map_err(|e| miette::miette!("failed to load vigil.toml: {e}"))?;
+
+            if !config.bypass.allow_postinstall.contains(&args.package) {
+                config.bypass.allow_postinstall.push(args.package.clone());
+                let contents = toml::to_string_pretty(&config)
+                    .map_err(|e| miette::miette!("failed to serialize vigil.toml: {e}"))?;
+                std::fs::write(project_dir.join("vigil.toml"), contents)
+                    .map_err(|e| miette::miette!("failed to write vigil.toml: {e}"))?;
+            }
+
+            eprintln!(
+                "  {} Pre-approved postinstall scripts for {}",
+                "✓".green().bold(),
+                args.package.bold(),
+            );
+            eprintln!(
+                "\n  Run `vigil install {}` to install with scripts enabled.",
+                args.package,
+            );
+            return Ok(());
+        }
         return Err(miette::miette!(
-            "'{}' not found in vigil.lock — install it first",
+            "'{}' not found in vigil.lock — install it first, or use `vigil trust` before installing",
             args.package
         ));
     }
+
+    let mut lockfile = lockfile_opt.unwrap();
 
     let username = whoami::username();
     let audit = AuditLog::new(&project_dir);
