@@ -39,6 +39,18 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # Semver
 semver = "1"
 
+# Hashing
+sha2 = "0.10"
+
+# Directory walking
+walkdir = "2"
+
+# System user
+whoami = "1"
+
+# Colored terminal output
+owo-colors = "4"
+
 # Internal crates
 vigil-core = { path = "crates/vigil-core" }
 vigil-registry = { path = "crates/vigil-registry" }

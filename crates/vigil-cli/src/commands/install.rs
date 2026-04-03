@@ -1,4 +1,17 @@
 use clap::Args;
+use std::env;
+use vigil_core::{
+    bun::BunRunner,
+    config::VigilConfig,
+    hash::hash_package_dir,
+    lockfile::{generate_from_tree, merge_into, VigilLockfile},
+    overrides::OverridesManager,
+    policy::PolicyEngine,
+    resolver::DependencyResolver,
+};
+use vigil_registry::NpmRegistryClient;
+
+use crate::{audit_log::{AuditEntry, AuditLog}, output};
 
 #[derive(Debug, Args)]
 pub struct InstallArgs {
@@ -15,7 +28,135 @@ pub struct InstallArgs {
 }
 
 pub async fn run(args: InstallArgs) -> miette::Result<()> {
-    eprintln!("vigil install: not yet implemented");
-    eprintln!("  packages: {:?}", args.packages);
+    let project_dir = env::current_dir()
+        .map_err(|e| miette::miette!("cannot determine current directory: {e}"))?;
+
+    // ── 1. Load config ────────────────────────────────────────────────────────
+    let config = VigilConfig::load(&project_dir)
+        .map_err(|e| miette::miette!("failed to load vigil.toml: {e}"))?;
+
+    // ── 2. Load existing lockfile (preserves prior approvals across runs) ─────
+    let existing_lockfile = VigilLockfile::read_optional(&project_dir)
+        .map_err(|e| miette::miette!("failed to read vigil.lock: {e}"))?;
+
+    // ── 3. Resolve dependency tree ────────────────────────────────────────────
+    let registry = NpmRegistryClient::new();
+    let mut resolver = DependencyResolver::new(registry, config.policy.clone());
+
+    eprintln!("Resolving {}…", args.packages.join(", "));
+
+    let pkg_refs: Vec<&str> = args.packages.iter().map(|s| s.as_str()).collect();
+    let tree = resolver
+        .resolve(&pkg_refs)
+        .await
+        .map_err(|e| miette::miette!("dependency resolution failed: {e}"))?;
+
+    // ── 4. Run policy checks ──────────────────────────────────────────────────
+    let mut bypass = config.bypass.clone();
+    bypass.allow_fresh.extend(args.allow_fresh.clone());
+
+    let engine = PolicyEngine::new(
+        config.policy.clone(),
+        bypass,
+        config.blocked.clone(),
+    );
+
+    let report = engine.check_tree(&tree, existing_lockfile.as_ref());
+
+    let has_blockers = output::print_check_report(&report, &tree);
+    if has_blockers {
+        return Err(output::print_blocked_and_fail(&report));
+    }
+
+    // ── 5. Build lockfile — merge new tree over existing to preserve approvals ─
+    let username = whoami::username();
+    let new_lockfile = generate_from_tree(&tree, &username);
+
+    let mut lockfile = if let Some(mut existing) = existing_lockfile {
+        merge_into(&mut existing, new_lockfile);
+        existing
+    } else {
+        new_lockfile
+    };
+
+    // ── 6. Write overrides to package.json ───────────────────────────────────
+    let overrides = OverridesManager::generate_overrides(&lockfile);
+    OverridesManager::write_overrides(&project_dir, &overrides)
+        .map_err(|e| miette::miette!("failed to update package.json overrides: {e}"))?;
+
+    // ── 7. Run bun add ────────────────────────────────────────────────────────
+    let bun = BunRunner::new(&project_dir)
+        .map_err(|e| miette::miette!("{e}"))?;
+
+    let direct_specs: Vec<_> = tree
+        .direct_nodes()
+        .into_iter()
+        .map(|n| n.spec.clone())
+        .collect();
+
+    let ignore_scripts = config.policy.block_postinstall;
+
+    eprintln!("Running bun add…");
+    bun.add(&direct_specs, ignore_scripts)
+        .await
+        .map_err(|e| miette::miette!("bun failed: {e}"))?;
+
+    // ── 8. Hash installed packages and update lockfile ────────────────────────
+    let node_modules = project_dir.join("node_modules");
+
+    for node in tree.all_nodes() {
+        let pkg_name = node.spec.name.to_string();
+        match hash_package_dir(&node_modules, &pkg_name) {
+            Ok(hash) => {
+                let key = node.spec.to_key();
+                if let Some(entry) = lockfile.packages.get_mut(&key) {
+                    entry.content_hash = hash;
+                }
+            }
+            Err(e) => {
+                eprintln!("  warning: could not hash {}: {e}", node.spec.to_key());
+            }
+        }
+    }
+
+    // ── 9. Write vigil.lock ───────────────────────────────────────────────────
+    lockfile
+        .write(&project_dir)
+        .map_err(|e| miette::miette!("failed to write vigil.lock: {e}"))?;
+
+    // ── 10. Append audit log entries ──────────────────────────────────────────
+    let audit = AuditLog::new(&project_dir);
+
+    for node in tree.all_nodes() {
+        let key = node.spec.to_key();
+        let pkg_entry = lockfile.packages.get(&key);
+        let checks_passed: Vec<String> = report
+            .for_package(&key)
+            .into_iter()
+            .filter(|r| r.outcome.is_passed())
+            .map(|r| r.check_name.to_string())
+            .collect();
+
+        let entry = AuditEntry {
+            ts: chrono::Utc::now(),
+            event: "install".to_string(),
+            package: node.spec.name.to_string(),
+            version: node.spec.version.to_string(),
+            age_days: pkg_entry.map(|p| p.age_at_install_days).unwrap_or(0),
+            checks_passed,
+            user: username.clone(),
+            reason: if args.allow_fresh.contains(&node.spec.name.to_string()) {
+                args.reason.clone()
+            } else {
+                None
+            },
+        };
+
+        let _ = audit.append(&entry); // non-fatal — audit failure should not abort install
+    }
+
+    // ── 11. Print success ─────────────────────────────────────────────────────
+    output::print_install_success(tree.nodes.len());
+
     Ok(())
 }

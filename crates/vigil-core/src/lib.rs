@@ -1,5 +1,7 @@
+pub mod bun;
 pub mod config;
 pub mod error;
+pub mod hash;
 pub mod lockfile;
 pub mod overrides;
 pub mod package_json;
@@ -9,7 +11,9 @@ pub mod resolver;
 pub mod semver_resolve;
 pub mod types;
 
+pub use bun::BunRunner;
 pub use config::VigilConfig;
+pub use hash::hash_package_dir;
 pub use error::{Error, Result};
 pub use lockfile::{LockfileDiff, LockedPackage, VigilLockfile};
 pub use lockfile::{diff as lockfile_diff, generate_from_tree, merge_into};

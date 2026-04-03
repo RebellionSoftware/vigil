@@ -1,7 +1,9 @@
 use clap::{Parser, Subcommand};
 use miette::Result;
 
+mod audit_log;
 mod commands;
+mod output;
 
 use commands::{audit, install, remove, trust, update, verify};
 
