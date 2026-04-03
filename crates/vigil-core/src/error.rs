@@ -41,6 +41,9 @@ pub enum Error {
 
     #[error("Bun exited with status {status}:\n{output}")]
     BunFailed { status: i32, output: String },
+
+    #[error("vigil.lock packages checksum mismatch — the file may have been tampered with or corrupted. Delete vigil.lock and re-run `vigil install` to recover.")]
+    LockfileChecksumMismatch,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

@@ -40,7 +40,7 @@ pub async fn run(args: UpdateArgs) -> miette::Result<()> {
     let project_dir = env::current_dir()
         .map_err(|e| miette::miette!("cannot determine current directory: {e}"))?;
 
-    let config = VigilConfig::load(&project_dir)
+    let (config, config_hash) = VigilConfig::load_with_hash(&project_dir)
         .map_err(|e| miette::miette!("failed to load vigil.toml: {e}"))?;
 
     let mut existing_lockfile = VigilLockfile::read(&project_dir)
@@ -157,17 +157,18 @@ pub async fn run(args: UpdateArgs) -> miette::Result<()> {
         if !changed_keys.contains(key.as_str()) {
             continue;
         }
-        match hash_package_dir(&node_modules, &node.spec.name.to_string()) {
-            Ok(hash) => {
-                if let Some(entry) = existing_lockfile.packages.get_mut(&key) {
-                    entry.content_hash = hash;
-                }
-            }
-            Err(e) => eprintln!("  warning: could not hash {key}: {e}"),
+        let hash = hash_package_dir(&node_modules, &node.spec.name.to_string())
+            .map_err(|e| miette::miette!(
+                "failed to hash {key} after update: {e}\n\
+                 The package may not have been installed correctly by bun."
+            ))?;
+        if let Some(entry) = existing_lockfile.packages.get_mut(&key) {
+            entry.content_hash = hash;
         }
     }
 
-    // ── Write lockfile ────────────────────────────────────────────────────────
+    // ── Write lockfile (with config hash for integrity tracking) ─────────────
+    existing_lockfile.meta.config_hash = config_hash;
     existing_lockfile
         .write(&project_dir)
         .map_err(|e| miette::miette!("failed to write vigil.lock: {e}"))?;
@@ -196,7 +197,9 @@ pub async fn run(args: UpdateArgs) -> miette::Result<()> {
                 None
             },
         };
-        let _ = audit.append(&entry);
+        if let Err(e) = audit.append(&entry) {
+            eprintln!("  {} failed to write audit log: {e}", "!".yellow());
+        }
     }
 
     let total = lockfile_diff.added.len() + lockfile_diff.changed.len();

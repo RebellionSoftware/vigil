@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::path::Path;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use chrono::{DateTime, Utc};
 use crate::error::{Error, Result};
 use crate::resolver::ResolvedTree;
@@ -22,6 +23,14 @@ pub struct LockfileMeta {
     pub vigil_version: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// SHA-256 of the JSON-serialized packages map. Detects accidental corruption
+    /// or naive tampering. Absent in lockfiles written by older vigil versions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub packages_checksum: Option<String>,
+    /// SHA-256 of vigil.toml at install time. Detects policy config drift.
+    /// Absent if vigil.toml was not present, or in lockfiles from older versions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_hash: Option<String>,
 }
 
 /// A single package entry in the lockfile.
@@ -54,6 +63,8 @@ impl VigilLockfile {
                 vigil_version: env!("CARGO_PKG_VERSION").to_string(),
                 created_at: now,
                 updated_at: now,
+                packages_checksum: None,
+                config_hash: None,
             },
             packages: BTreeMap::new(),
         }
@@ -72,6 +83,14 @@ impl VigilLockfile {
             });
         }
 
+        // Verify packages checksum when present. Absent in older lockfiles — skip.
+        if let Some(stored) = &lockfile.meta.packages_checksum {
+            let computed = compute_packages_checksum(&lockfile.packages);
+            if &computed != stored {
+                return Err(Error::LockfileChecksumMismatch);
+            }
+        }
+
         Ok(lockfile)
     }
 
@@ -88,12 +107,15 @@ impl VigilLockfile {
     ///
     /// Uses a write-to-tmp-then-rename pattern so the file on disk is never
     /// in a partially-written state even if the process is killed mid-write.
+    /// Computes and embeds a packages checksum so subsequent reads can detect
+    /// accidental corruption or naive tampering.
     pub fn write(&mut self, project_dir: &Path) -> Result<()> {
         self.meta.updated_at = Utc::now();
+        self.meta.packages_checksum = Some(compute_packages_checksum(&self.packages));
         let path = project_dir.join(LOCKFILE_FILENAME);
         let tmp_path = project_dir.join(format!("{LOCKFILE_FILENAME}.tmp"));
         let contents = toml::to_string_pretty(self)?;
-        std::fs::write(&tmp_path, contents)?;
+        std::fs::write(&tmp_path, &contents)?;
         std::fs::rename(&tmp_path, &path)?;
         Ok(())
     }
@@ -238,6 +260,17 @@ pub fn diff(old: &VigilLockfile, new: &VigilLockfile) -> LockfileDiff {
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
+
+/// Compute a deterministic SHA-256 over the packages map.
+///
+/// Uses JSON (not TOML) for serialization because JSON's key ordering is
+/// deterministic for `BTreeMap` and is simpler to verify independently.
+/// The result is a lowercase hex string.
+fn compute_packages_checksum(packages: &BTreeMap<String, LockedPackage>) -> String {
+    let json = serde_json::to_string(packages).expect("packages map is always serializable");
+    let digest = Sha256::digest(json.as_bytes());
+    format!("{digest:x}")
+}
 
 /// BFS upward through the dependency graph to find all direct (user-requested)
 /// package names that are ancestors of `start_key`.

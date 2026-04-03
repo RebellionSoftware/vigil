@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::path::Path;
 use crate::error::{Error, Result};
 
@@ -29,14 +30,22 @@ impl VigilConfig {
     /// Load config from `vigil.toml` in the given directory.
     /// Returns defaults if no config file exists.
     pub fn load(project_dir: &Path) -> Result<Self> {
+        let (config, _) = Self::load_with_hash(project_dir)?;
+        Ok(config)
+    }
+
+    /// Load config and also return the SHA-256 of the raw file contents.
+    /// Returns `None` for the hash if `vigil.toml` does not exist.
+    pub fn load_with_hash(project_dir: &Path) -> Result<(Self, Option<String>)> {
         let path = project_dir.join("vigil.toml");
         if !path.exists() {
-            return Ok(VigilConfig::default());
+            return Ok((VigilConfig::default(), None));
         }
-        let contents = std::fs::read_to_string(&path)
-            .map_err(|e| Error::Io(e))?;
+        let contents = std::fs::read_to_string(&path).map_err(Error::Io)?;
+        let digest = Sha256::digest(contents.as_bytes());
+        let hash = format!("{digest:x}");
         let config: VigilConfig = toml::from_str(&contents)?;
-        Ok(config)
+        Ok((config, Some(hash)))
     }
 }
 

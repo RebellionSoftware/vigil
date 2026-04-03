@@ -75,7 +75,7 @@ pub async fn run(args: RemoveArgs) -> miette::Result<()> {
         let (name, version) = key.rsplit_once('@').unwrap_or((key.as_str(), ""));
         lockfile.packages.remove(key);
         eprintln!("  {} {key}", "-".red().bold());
-        let _ = audit.append(&AuditEntry {
+        if let Err(e) = audit.append(&AuditEntry {
             ts: chrono::Utc::now(),
             event: "remove".to_string(),
             package: name.to_string(),
@@ -84,7 +84,9 @@ pub async fn run(args: RemoveArgs) -> miette::Result<()> {
             checks_passed: vec![],
             user: username.clone(),
             reason: None,
-        });
+        }) {
+            eprintln!("  {} failed to write audit log: {e}", "!".yellow());
+        }
     }
 
     // ── Remove orphaned transitives ───────────────────────────────────────────
@@ -92,7 +94,7 @@ pub async fn run(args: RemoveArgs) -> miette::Result<()> {
         let (oname, over) = orphan_key.rsplit_once('@').unwrap_or((orphan_key.as_str(), ""));
         lockfile.packages.remove(orphan_key);
         eprintln!("  {} {} (orphaned transitive)", "-".red(), orphan_key);
-        let _ = audit.append(&AuditEntry {
+        if let Err(e) = audit.append(&AuditEntry {
             ts: chrono::Utc::now(),
             event: "remove".to_string(),
             package: oname.to_string(),
@@ -101,7 +103,9 @@ pub async fn run(args: RemoveArgs) -> miette::Result<()> {
             checks_passed: vec![],
             user: username.clone(),
             reason: Some(format!("orphaned transitive of {}", removed_names.iter().cloned().collect::<Vec<_>>().join(", "))),
-        });
+        }) {
+            eprintln!("  {} failed to write audit log: {e}", "!".yellow());
+        }
     }
 
     // ── Write overrides (removes entries for removed/orphaned packages) ────────

@@ -1,9 +1,10 @@
 use std::{
     fs::OpenOptions,
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
 };
 use chrono::{DateTime, Utc};
+use fd_lock::RwLock as FdRwLock;
 use serde::{Deserialize, Serialize};
 
 const AUDIT_LOG_FILENAME: &str = "vigil-audit.log";
@@ -46,14 +47,26 @@ impl AuditLog {
     }
 
     /// Append one entry. Creates the file if it does not exist.
+    ///
+    /// Acquires an exclusive advisory file lock before writing so that
+    /// concurrent vigil invocations do not interleave partial lines.
     pub fn append(&self, entry: &AuditEntry) -> std::io::Result<()> {
-        let mut file = OpenOptions::new()
+        let file = OpenOptions::new()
             .create(true)
-            .append(true)
+            .write(true)
+            .read(true)
             .open(&self.path)?;
+
+        let mut lock = FdRwLock::new(file);
+        let mut guard = lock.write()?;
+
+        // Seek to end after acquiring the lock so we always append even when
+        // another process has written since we opened the file.
+        guard.seek(SeekFrom::End(0))?;
+
         let line = serde_json::to_string(entry)
             .expect("AuditEntry is always serializable");
-        writeln!(file, "{line}")
+        writeln!(*guard, "{line}")
     }
 
     /// Read all entries from the log. Returns an empty vec if the file does not exist.

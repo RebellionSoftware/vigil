@@ -73,7 +73,7 @@ pub async fn run(args: TrustArgs) -> miette::Result<()> {
         }
 
         let (name, version) = key.rsplit_once('@').unwrap_or((key.as_str(), ""));
-        let _ = audit.append(&AuditEntry {
+        if let Err(e) = audit.append(&AuditEntry {
             ts: chrono::Utc::now(),
             event: "trust".to_string(),
             package: name.to_string(),
@@ -82,7 +82,10 @@ pub async fn run(args: TrustArgs) -> miette::Result<()> {
             checks_passed: vec![],
             user: username.clone(),
             reason: Some(format!("approved: {}", args.allow.join(", "))),
-        });
+        }) {
+            // Trust decisions MUST be audited — fail loudly if the log write fails.
+            return Err(miette::miette!("failed to write trust decision to audit log: {e}"));
+        }
     }
 
     lockfile

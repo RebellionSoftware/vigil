@@ -2,6 +2,24 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use crate::error::{Error, Result};
 
+/// Validate a single name component (the scope part or name part of a package name).
+///
+/// npm package names must be lowercase alphanumeric, and may contain hyphens,
+/// dots, underscores, and tildes. They cannot start with a dot, hyphen, or
+/// underscore, and cannot be the path-traversal sequence "..".
+fn validate_name_part(part: &str, full_name: &str) -> Result<()> {
+    if part == ".." {
+        return Err(Error::InvalidPackageName(full_name.to_string()));
+    }
+    if matches!(part.chars().next(), Some('.' | '-' | '_')) {
+        return Err(Error::InvalidPackageName(full_name.to_string()));
+    }
+    if !part.chars().all(|c| matches!(c, 'a'..='z' | '0'..='9' | '-' | '.' | '_' | '~')) {
+        return Err(Error::InvalidPackageName(full_name.to_string()));
+    }
+    Ok(())
+}
+
 /// A validated npm package name (e.g. "axios" or "@types/node").
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PackageName(String);
@@ -9,16 +27,33 @@ pub struct PackageName(String);
 impl PackageName {
     pub fn new(name: impl Into<String>) -> Result<Self> {
         let name = name.into();
-        if name.is_empty() {
+
+        // Basic structural checks — these are the same regardless of scope.
+        if name.is_empty() || name.len() > 214 {
             return Err(Error::InvalidPackageName(name));
         }
-        // Scoped packages: @scope/name
+        // Null bytes and backslashes are never valid and enable path traversal.
+        if name.contains('\0') || name.contains('\\') {
+            return Err(Error::InvalidPackageName(name));
+        }
+
         if name.starts_with('@') {
-            let parts: Vec<&str> = name[1..].splitn(2, '/').collect();
-            if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
+            // Scoped packages: @scope/name — exactly one slash after the @
+            match name[1..].splitn(2, '/').collect::<Vec<_>>().as_slice() {
+                [scope, pkg] if !scope.is_empty() && !pkg.is_empty() => {
+                    validate_name_part(scope, &name)?;
+                    validate_name_part(pkg, &name)?;
+                }
+                _ => return Err(Error::InvalidPackageName(name)),
+            }
+        } else {
+            // Unscoped packages must not contain a forward slash.
+            if name.contains('/') {
                 return Err(Error::InvalidPackageName(name));
             }
+            validate_name_part(&name, &name)?;
         }
+
         Ok(PackageName(name))
     }
 
@@ -156,6 +191,34 @@ mod tests {
         assert!(PackageName::new("@").is_err());
         assert!(PackageName::new("@/name").is_err());
         assert!(PackageName::new("@scope/").is_err());
+    }
+
+    #[test]
+    fn package_name_rejects_path_traversal() {
+        assert!(PackageName::new("../etc/passwd").is_err());
+        assert!(PackageName::new("..").is_err());
+        assert!(PackageName::new("@scope/..").is_err());
+        assert!(PackageName::new("@../name").is_err());
+    }
+
+    #[test]
+    fn package_name_rejects_path_separators() {
+        assert!(PackageName::new("foo/bar").is_err(), "unscoped with slash");
+        assert!(PackageName::new("foo\\bar").is_err(), "backslash");
+        assert!(PackageName::new("foo\0bar").is_err(), "null byte");
+    }
+
+    #[test]
+    fn package_name_rejects_uppercase() {
+        assert!(PackageName::new("Axios").is_err());
+        assert!(PackageName::new("LODASH").is_err());
+    }
+
+    #[test]
+    fn package_name_rejects_bad_starts() {
+        assert!(PackageName::new(".foo").is_err(), "starts with dot");
+        assert!(PackageName::new("-foo").is_err(), "starts with hyphen");
+        assert!(PackageName::new("_foo").is_err(), "starts with underscore");
     }
 
     #[test]

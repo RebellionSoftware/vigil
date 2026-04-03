@@ -1,6 +1,7 @@
 use clap::Args;
 use std::env;
 use vigil_core::{
+    config::VigilConfig,
     hash::hash_package_dir,
     lockfile::VigilLockfile,
     overrides::{DriftIssue, OverridesManager},
@@ -56,6 +57,12 @@ pub async fn run(args: VerifyArgs) -> miette::Result<()> {
                             "hash mismatch for {key}\n    expected: {}\n    actual:   {actual_hash}",
                             entry.content_hash,
                         ));
+                    } else if args.ci {
+                        // In CI, a missing disk hash is a failure: every package must
+                        // have been hashed by a prior `vigil install` run.
+                        failures.push(format!(
+                            "{key}: disk hash not yet recorded — run `vigil install` and commit vigil.lock"
+                        ));
                     } else {
                         eprintln!(
                             "  {} {key}: disk hash not yet recorded — run `vigil install` to compute it",
@@ -95,6 +102,29 @@ pub async fn run(args: VerifyArgs) -> miette::Result<()> {
         }
         Err(e) => {
             failures.push(format!("could not read package.json overrides: {e}"));
+        }
+    }
+
+    // ── vigil.toml integrity ──────────────────────────────────────────────────
+    // If the lockfile records a config hash, verify vigil.toml hasn't changed.
+    if let Some(stored_hash) = &lockfile.meta.config_hash {
+        match VigilConfig::load_with_hash(&project_dir) {
+            Ok((_, Some(actual_hash))) => {
+                if &actual_hash != stored_hash {
+                    failures.push(
+                        "vigil.toml has been modified since last install — \
+                         re-run `vigil install` to update the lockfile".to_string(),
+                    );
+                }
+            }
+            Ok((_, None)) => {
+                failures.push(
+                    "vigil.toml is missing — policy configuration may have been removed".to_string(),
+                );
+            }
+            Err(e) => {
+                failures.push(format!("could not read vigil.toml: {e}"));
+            }
         }
     }
 

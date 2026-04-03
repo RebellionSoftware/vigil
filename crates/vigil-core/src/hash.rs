@@ -25,6 +25,18 @@ pub fn hash_package_dir(node_modules: &Path, package_name: &str) -> Result<Strin
         )));
     }
 
+    // Guard against path traversal: the resolved package directory must be
+    // strictly inside node_modules. We canonicalize after confirming existence
+    // so that symlinks are followed and the check is reliable.
+    let canonical_nm = node_modules.canonicalize().map_err(Error::Io)?;
+    let canonical_pkg = pkg_dir.canonicalize().map_err(Error::Io)?;
+    if !canonical_pkg.starts_with(&canonical_nm) {
+        return Err(Error::Io(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!("package name escapes node_modules: {package_name}"),
+        )));
+    }
+
     let mut entries: Vec<_> = WalkDir::new(&pkg_dir)
         .sort_by_file_name()
         .into_iter()

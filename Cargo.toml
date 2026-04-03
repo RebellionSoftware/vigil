@@ -51,6 +51,9 @@ whoami = "1"
 # Colored terminal output
 owo-colors = "4"
 
+# File locking
+fd-lock = "4"
+
 # Internal crates
 vigil-core = { path = "crates/vigil-core" }
 vigil-registry = { path = "crates/vigil-registry" }

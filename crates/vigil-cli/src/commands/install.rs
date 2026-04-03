@@ -11,6 +11,7 @@ use vigil_core::{
 };
 use vigil_registry::NpmRegistryClient;
 
+use owo_colors::OwoColorize;
 use crate::{audit_log::{AuditEntry, AuditLog}, output};
 
 #[derive(Debug, Args)]
@@ -31,8 +32,8 @@ pub async fn run(args: InstallArgs) -> miette::Result<()> {
     let project_dir = env::current_dir()
         .map_err(|e| miette::miette!("cannot determine current directory: {e}"))?;
 
-    // ── 1. Load config ────────────────────────────────────────────────────────
-    let config = VigilConfig::load(&project_dir)
+    // ── 1. Load config (with hash for vigil.toml integrity tracking) ─────────
+    let (config, config_hash) = VigilConfig::load_with_hash(&project_dir)
         .map_err(|e| miette::miette!("failed to load vigil.toml: {e}"))?;
 
     // ── 2. Load existing lockfile (preserves prior approvals across runs) ─────
@@ -106,20 +107,20 @@ pub async fn run(args: InstallArgs) -> miette::Result<()> {
 
     for node in tree.all_nodes() {
         let pkg_name = node.spec.name.to_string();
-        match hash_package_dir(&node_modules, &pkg_name) {
-            Ok(hash) => {
-                let key = node.spec.to_key();
-                if let Some(entry) = lockfile.packages.get_mut(&key) {
-                    entry.content_hash = hash;
-                }
-            }
-            Err(e) => {
-                eprintln!("  warning: could not hash {}: {e}", node.spec.to_key());
-            }
+        let hash = hash_package_dir(&node_modules, &pkg_name)
+            .map_err(|e| miette::miette!(
+                "failed to hash {} after install: {e}\n\
+                 The package may not have been installed correctly by bun.",
+                node.spec.to_key()
+            ))?;
+        let key = node.spec.to_key();
+        if let Some(entry) = lockfile.packages.get_mut(&key) {
+            entry.content_hash = hash;
         }
     }
 
-    // ── 9. Write vigil.lock ───────────────────────────────────────────────────
+    // ── 9. Write vigil.lock (with config hash for integrity tracking) ─────────
+    lockfile.meta.config_hash = config_hash;
     lockfile
         .write(&project_dir)
         .map_err(|e| miette::miette!("failed to write vigil.lock: {e}"))?;
@@ -152,7 +153,9 @@ pub async fn run(args: InstallArgs) -> miette::Result<()> {
             },
         };
 
-        let _ = audit.append(&entry); // non-fatal — audit failure should not abort install
+        if let Err(e) = audit.append(&entry) {
+            eprintln!("  {} failed to write audit log: {e}", "!".yellow());
+        }
     }
 
     // ── 11. Print success ─────────────────────────────────────────────────────
