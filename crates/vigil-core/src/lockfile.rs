@@ -417,6 +417,7 @@ updated_at = "2026-04-01T00:00:00Z"
             published_at: Utc::now() - chrono::Duration::days(30),
             is_direct: false,
             has_install_script: false,
+            days_since_prior_publish: None,
         };
 
         let direct_node = ResolvedNode {
@@ -432,6 +433,7 @@ updated_at = "2026-04-01T00:00:00Z"
             published_at: Utc::now() - chrono::Duration::days(100),
             is_direct: true,
             has_install_script: false,
+            days_since_prior_publish: None,
         };
 
         let mut nodes = HashMap::new();
@@ -588,6 +590,7 @@ updated_at = "2026-04-01T00:00:00Z"
             metadata: make_meta("ms", "2.1.3", "sha512-ms"),
             published_at: Utc::now() - chrono::Duration::days(30),
             is_direct: false, has_install_script: false,
+            days_since_prior_publish: None,
         };
         let debug_node = ResolvedNode {
             spec: debug_spec.clone(),
@@ -596,6 +599,7 @@ updated_at = "2026-04-01T00:00:00Z"
             metadata: make_meta("debug", "4.4.3", "sha512-debug"),
             published_at: Utc::now() - chrono::Duration::days(30),
             is_direct: false, has_install_script: false,
+            days_since_prior_publish: None,
         };
         let express_node = ResolvedNode {
             spec: express_spec.clone(),
@@ -604,6 +608,7 @@ updated_at = "2026-04-01T00:00:00Z"
             metadata: make_meta("express", "4.18.2", "sha512-express"),
             published_at: Utc::now() - chrono::Duration::days(100),
             is_direct: true, has_install_script: false,
+            days_since_prior_publish: None,
         };
 
         let mut nodes = HashMap::new();
@@ -658,18 +663,21 @@ updated_at = "2026-04-01T00:00:00Z"
             metadata: make_meta("pkg-c"),
             published_at: Utc::now() - chrono::Duration::days(30),
             is_direct: false, has_install_script: false,
+            days_since_prior_publish: None,
         };
         let a_node = ResolvedNode {
             spec: a_spec.clone(), dependencies: vec![c_spec.clone()], dependents: vec![],
             metadata: make_meta("pkg-a"),
             published_at: Utc::now() - chrono::Duration::days(50),
             is_direct: true, has_install_script: false,
+            days_since_prior_publish: None,
         };
         let b_node = ResolvedNode {
             spec: b_spec.clone(), dependencies: vec![c_spec.clone()], dependents: vec![],
             metadata: make_meta("pkg-b"),
             published_at: Utc::now() - chrono::Duration::days(50),
             is_direct: true, has_install_script: false,
+            days_since_prior_publish: None,
         };
 
         let mut nodes = HashMap::new();

@@ -1,5 +1,6 @@
 pub mod age_gate;
 pub mod postinstall;
+pub mod velocity;
 
 use crate::{
     config::{BlockedConfig, BypassConfig, PolicyConfig},
@@ -157,6 +158,12 @@ impl PolicyEngine {
             results.extend(postinstall::check(node, &self.config, &self.bypass, lockfile));
         }
 
+        // Velocity / inactivity check
+        let apply_velocity = node.is_direct || self.config.transitive_velocity_check;
+        if self.config.inactivity_days > 0 && apply_velocity {
+            results.extend(velocity::check(node, &self.config, &self.bypass));
+        }
+
         results
     }
 }
@@ -199,6 +206,7 @@ mod tests {
             published_at,
             is_direct,
             has_install_script: false,
+            days_since_prior_publish: None,
         }
     }
 
@@ -319,6 +327,7 @@ mod tests {
         let bypass = BypassConfig {
             allow_fresh: vec!["trusted-pkg".to_string()],
             allow_postinstall: vec![],
+            allow_inactivity: vec![],
         };
         let engine = PolicyEngine::new(PolicyConfig::default(), bypass, BlockedConfig::default());
 

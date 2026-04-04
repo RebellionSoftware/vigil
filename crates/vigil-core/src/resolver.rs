@@ -53,6 +53,9 @@ pub struct ResolvedNode {
     pub published_at: DateTime<Utc>,
     pub is_direct: bool,
     pub has_install_script: bool,
+    /// Number of days between the previously published version and this one.
+    /// `None` means this is the first version ever published (no prior publish to compare).
+    pub days_since_prior_publish: Option<i64>,
 }
 
 /// Resolves a set of package specifiers to a complete, flat dependency graph.
@@ -104,11 +107,9 @@ impl<R: RegistryClient> DependencyResolver<R> {
                     if let Some(existing_key) = find_by_name(&nodes, &name) {
                         let dep_spec = PackageSpec::parse(dep_key)
                             .map_err(|e| crate::error::Error::InvalidPackageSpec(e.to_string()))?;
-                        nodes
-                            .get_mut(&existing_key)
-                            .unwrap()
-                            .dependents
-                            .push(dep_spec);
+                        if let Some(node) = nodes.get_mut(&existing_key) {
+                            node.dependents.push(dep_spec);
+                        }
                     }
                 }
                 continue;
@@ -146,6 +147,7 @@ impl<R: RegistryClient> DependencyResolver<R> {
 
             // Parse published_at from the time map
             let published_at = parse_published_at(&metadata, &exact_version);
+            let days_since_prior_publish = compute_days_since_prior_publish(&metadata, &exact_version);
 
             let spec = PackageSpec::new(
                 PackageName::new(&name)
@@ -180,6 +182,7 @@ impl<R: RegistryClient> DependencyResolver<R> {
                 published_at,
                 is_direct,
                 has_install_script,
+                days_since_prior_publish,
             });
 
             // Enqueue all transitive dependencies
@@ -258,8 +261,9 @@ fn split_spec(spec: &str) -> (String, String) {
 
 /// Find the map key for a package by its name (ignoring version).
 fn find_by_name(nodes: &HashMap<String, ResolvedNode>, name: &str) -> Option<String> {
+    let prefix = format!("{name}@");
     nodes.keys()
-        .find(|k| k.starts_with(&format!("{name}@")))
+        .find(|k| k.starts_with(&prefix))
         .cloned()
 }
 
@@ -268,7 +272,61 @@ fn parse_published_at(metadata: &PackageMetadata, version: &str) -> DateTime<Utc
     metadata.time
         .get(version)
         .and_then(|s| s.parse::<DateTime<Utc>>().ok())
-        .unwrap_or_else(|| DateTime::from_timestamp(0, 0).unwrap())
+        .unwrap_or(DateTime::UNIX_EPOCH)
+}
+
+/// Compute how many days elapsed between the most recent prior version publish and this one.
+///
+/// Returns:
+/// - `None`          — no prior version keys exist in the time map; genuinely first-ever publish
+/// - `Some(i64::MAX)` — prior version keys exist but no valid, pre-current timestamps could be
+///                      parsed (malformed data or timestamp manipulation); treat as maximally
+///                      suspicious in the velocity check
+/// - `Some(days)`    — the gap in days between the most recent prior publish and this one
+fn compute_days_since_prior_publish(metadata: &PackageMetadata, version: &str) -> Option<i64> {
+    let this_ts = metadata.time.get(version)?.parse::<DateTime<Utc>>().ok()?;
+
+    // npm metadata keys that are not version publish events.
+    let is_meta_key = |k: &str| matches!(k, "created" | "modified" | "unpublished");
+
+    // Count prior version entries before filtering so we can distinguish
+    // "no prior versions" (first publish) from "prior versions exist but unreadable"
+    // (data integrity failure).
+    let prior_key_count = metadata.time.keys()
+        .filter(|k| !is_meta_key(k) && k.as_str() != version)
+        .count();
+
+    if prior_key_count == 0 {
+        return None; // genuinely first-ever publish
+    }
+
+    // Parse timestamps for prior versions that predate this version.
+    let mut prior_timestamps: Vec<DateTime<Utc>> = metadata.time.iter()
+        .filter(|(k, _)| !is_meta_key(k) && k.as_str() != version)
+        .filter_map(|(_, v)| v.parse::<DateTime<Utc>>().ok())
+        .filter(|ts| *ts < this_ts)
+        .collect();
+
+    if prior_timestamps.is_empty() {
+        // Prior version entries exist but none produced a valid, pre-current timestamp.
+        // This indicates malformed registry data or deliberate timestamp manipulation
+        // (e.g. future-dating prior versions to hide a dormancy gap).
+        // Return i64::MAX so the velocity check treats this as maximally suspicious.
+        return Some(i64::MAX);
+    }
+
+    prior_timestamps.sort();
+    let prior_ts = prior_timestamps.last()?;
+    let gap_days = (this_ts - *prior_ts).num_days();
+
+    // A negative gap means a prior-version timestamp is in the future relative to the
+    // current version's own timestamp — should not occur under normal conditions.
+    // Treat as suspicious data rather than silently passing.
+    if gap_days < 0 {
+        return Some(i64::MAX);
+    }
+
+    Some(gap_days)
 }
 
 #[cfg(test)]

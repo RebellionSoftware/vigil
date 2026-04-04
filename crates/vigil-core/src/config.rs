@@ -83,6 +83,10 @@ pub struct PolicyConfig {
     /// Apply velocity checks to transitive dependency changes (Phase 2).
     #[serde(default = "default_true")]
     pub transitive_velocity_check: bool,
+
+    /// Days of inactivity after which a sudden new publish is flagged. 0 = disabled.
+    #[serde(default = "default_inactivity_days")]
+    pub inactivity_days: u32,
 }
 
 impl Default for PolicyConfig {
@@ -96,12 +100,17 @@ impl Default for PolicyConfig {
             freeze_transitive: true,
             transitive_age_gate: true,
             transitive_velocity_check: true,
+            inactivity_days: default_inactivity_days(),
         }
     }
 }
 
 fn default_min_age_days() -> u32 {
     7
+}
+
+fn default_inactivity_days() -> u32 {
+    180
 }
 
 fn default_true() -> bool {
@@ -120,6 +129,11 @@ pub struct BypassConfig {
     /// is not yet installed. Once installed, approval moves to vigil.lock.
     #[serde(default)]
     pub allow_postinstall: Vec<String>,
+
+    /// Packages approved to install despite long inactivity gap.
+    /// Written by `vigil trust <pkg> --allow inactivity`.
+    #[serde(default)]
+    pub allow_inactivity: Vec<String>,
 }
 
 /// Blocked packages — can never be installed regardless of policy.
@@ -142,6 +156,7 @@ mod tests {
         assert!(config.policy.transitive_age_gate);
         assert!(!config.policy.allow_prerelease);
         assert!(!config.policy.require_provenance);
+        assert_eq!(config.policy.inactivity_days, 180);
     }
 
     #[test]
@@ -152,6 +167,7 @@ min_age_days = 14
 allow_prerelease = true
 block_postinstall = false
 freeze_transitive = true
+inactivity_days = 90
 
 [bypass]
 allow_fresh = ["@internal/shared"]
@@ -165,6 +181,7 @@ packages = ["colors", "faker"]
         assert!(!config.policy.block_postinstall);
         assert_eq!(config.bypass.allow_fresh, vec!["@internal/shared"]);
         assert_eq!(config.blocked.packages, vec!["colors", "faker"]);
+        assert_eq!(config.policy.inactivity_days, 90);
     }
 
     #[test]

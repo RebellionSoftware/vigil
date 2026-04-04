@@ -132,7 +132,7 @@ pub async fn run(args: InstallArgs) -> miette::Result<()> {
         .map_err(|e| miette::miette!("failed to update package.json overrides: {e}"))?;
 
     // ── 8. Run bun add ────────────────────────────────────────────────────────
-    let bun = BunRunner::new(&project_dir)
+    let bun = BunRunner::new(&project_dir).await
         .map_err(|e| miette::miette!("{e}"))?;
 
     let direct_specs: Vec<_> = tree

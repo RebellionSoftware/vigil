@@ -135,7 +135,7 @@ pub async fn run(args: UpdateArgs) -> miette::Result<()> {
         .map_err(|e| miette::miette!("failed to update package.json overrides: {e}"))?;
 
     // ── Run bun install (re-resolves from updated package.json + overrides) ───
-    let bun = BunRunner::new(&project_dir)
+    let bun = BunRunner::new(&project_dir).await
         .map_err(|e| miette::miette!("{e}"))?;
 
     eprintln!("Running bun install…");

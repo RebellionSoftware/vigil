@@ -1,4 +1,6 @@
 pub mod audit;
+pub mod import;
+pub mod init;
 pub mod install;
 pub mod remove;
 pub mod trust;

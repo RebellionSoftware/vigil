@@ -22,7 +22,7 @@ pub struct AuditLogArgs {
     #[arg(long)]
     pub package: Option<String>,
 
-    /// Filter by event type (install, update, remove, block).
+    /// Filter by event type (install, update, remove, block, import, trust).
     #[arg(long)]
     pub event: Option<String>,
 
@@ -83,6 +83,8 @@ async fn show_log(args: AuditLogArgs) -> miette::Result<()> {
             "update"  => entry.event.cyan().to_string(),
             "remove"  => entry.event.red().to_string(),
             "block"   => entry.event.red().bold().to_string(),
+            "import"  => entry.event.yellow().to_string(),
+            "trust"   => entry.event.magenta().to_string(),
             _         => entry.event.clone(),
         };
 

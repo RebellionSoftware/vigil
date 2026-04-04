@@ -66,7 +66,10 @@ impl AuditLog {
 
         let line = serde_json::to_string(entry)
             .expect("AuditEntry is always serializable");
-        writeln!(*guard, "{line}")
+        writeln!(*guard, "{line}")?;
+        // Flush kernel page cache to disk before releasing the lock so audit
+        // entries are durable even if the process crashes immediately after.
+        (*guard).sync_data()
     }
 
     /// Read all entries from the log. Returns an empty vec if the file does not exist.

@@ -17,14 +17,19 @@ impl BunRunner {
     /// Find `bun` in `$PATH` and verify it is executable.
     ///
     /// Returns `Err(Error::BunNotFound)` if `bun` is not available.
-    pub fn new(project_dir: &Path) -> Result<Self> {
-        // Probe by running `bun --version`; if it fails bun is not installed.
-        let status = std::process::Command::new("bun")
-            .arg("--version")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map_err(|_| Error::BunNotFound)?;
+    ///
+    /// Uses `spawn_blocking` so the probe does not block a Tokio worker thread.
+    pub async fn new(project_dir: &Path) -> Result<Self> {
+        let status = tokio::task::spawn_blocking(|| {
+            std::process::Command::new("bun")
+                .arg("--version")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+        })
+        .await
+        .map_err(|_| Error::BunNotFound)? // JoinError — task panicked
+        .map_err(|_| Error::BunNotFound)?; // io::Error — bun not in PATH
 
         if !status.success() {
             return Err(Error::BunNotFound);
@@ -60,6 +65,27 @@ impl BunRunner {
             .arg("remove")
             .args(package_names);
         self.run(cmd).await
+    }
+
+    /// Run `bun init` interactively.
+    ///
+    /// Unlike other methods, this inherits stdin/stdout/stderr so the user
+    /// can respond to bun's prompts directly in the terminal.
+    pub async fn init(&self) -> Result<()> {
+        let status = tokio::process::Command::new(&self.bun_path)
+            .current_dir(&self.project_dir)
+            .arg("init")
+            .status()
+            .await
+            .map_err(|_| Error::BunNotFound)?;
+
+        if !status.success() {
+            return Err(Error::BunFailed {
+                status: status.code().unwrap_or(-1),
+                output: "bun init failed".to_string(),
+            });
+        }
+        Ok(())
     }
 
     /// Run a bare `bun install` (installs from existing `package.json` + lockfile).

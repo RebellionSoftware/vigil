@@ -5,7 +5,7 @@ mod audit_log;
 mod commands;
 mod output;
 
-use commands::{audit, install, remove, trust, update, verify};
+use commands::{audit, import, init, install, remove, trust, update, verify};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -22,6 +22,12 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
+    /// Initialise a new project with vigil.toml and run bun init.
+    Init(init::InitArgs),
+
+    /// Import an existing project's dependencies into vigil.lock.
+    Import(import::ImportArgs),
+
     /// Install a package (runs all security checks first).
     Install(install::InstallArgs),
 
@@ -46,6 +52,8 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::Init(args) => init::run(args).await,
+        Commands::Import(args) => import::run(args).await,
         Commands::Install(args) => install::run(args).await,
         Commands::Update(args) => update::run(args).await,
         Commands::Remove(args) => remove::run(args).await,

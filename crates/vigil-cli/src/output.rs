@@ -141,13 +141,33 @@ pub fn print_install_success(package_count: usize) {
 /// Return a miette error indicating installation was blocked.
 ///
 /// The per-package details were already printed by `print_check_report`; this
-/// just adds the final "Installation blocked." header and the machine-readable error.
+/// just adds the final "Installation blocked." header with context-aware hints
+/// and the machine-readable error.
 pub fn print_blocked_and_fail(report: &TreeCheckReport) -> miette::Error {
-    let n = report.blocked().iter()
+    let blocked = report.blocked();
+    let n = blocked.iter()
         .map(|r| r.package.to_key())
         .collect::<std::collections::HashSet<_>>()
         .len();
+
     eprintln!("{}", format!("\nInstallation blocked — {n} package{} failed security checks.", if n == 1 { "" } else { "s" }).red().bold());
-    eprintln!("  Run with --allow-fresh <package> --reason \"<reason>\" to bypass the age gate.");
+
+    // Collect the distinct check names that caused blocks so hints are relevant.
+    let check_names: std::collections::HashSet<&str> =
+        blocked.iter().map(|r| r.check_name).collect();
+
+    if check_names.contains("age-gate") {
+        eprintln!("  {} Age gate: use --allow-fresh <package> --reason \"<reason>\" to bypass.", "→".dimmed());
+    }
+    if check_names.contains("velocity") {
+        eprintln!("  {} Inactivity: use `vigil trust <package> --allow inactivity` after reviewing the changelog.", "→".dimmed());
+    }
+    if check_names.contains("postinstall") {
+        eprintln!("  {} Postinstall: use `vigil trust <package> --allow postinstall` to approve scripts.", "→".dimmed());
+    }
+    if check_names.contains("blocked") {
+        eprintln!("  {} Blocklist: remove the package from [blocked].packages in vigil.toml to allow.", "→".dimmed());
+    }
+
     miette::miette!("{n} package{} failed security checks", if n == 1 { "" } else { "s" })
 }

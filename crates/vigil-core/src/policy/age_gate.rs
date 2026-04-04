@@ -11,7 +11,7 @@ use crate::{
 /// Returns an empty Vec only if `min_age_days == 0` (check disabled at engine level).
 pub fn check(node: &ResolvedNode, config: &PolicyConfig) -> Vec<CheckResult> {
     // Unknown publish time — treat as maximally suspicious (block, not pass)
-    if node.published_at == chrono::DateTime::<chrono::Utc>::from_timestamp(0, 0).unwrap() {
+    if node.published_at == chrono::DateTime::<chrono::Utc>::UNIX_EPOCH {
         return vec![CheckResult {
             package: node.spec.clone(),
             check_name: "age-gate",
@@ -95,6 +95,7 @@ mod tests {
             published_at: Utc::now() - Duration::days(days),
             is_direct: true,
             has_install_script: false,
+            days_since_prior_publish: None,
         }
     }
 

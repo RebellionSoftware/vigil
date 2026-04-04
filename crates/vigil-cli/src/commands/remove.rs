@@ -114,7 +114,7 @@ pub async fn run(args: RemoveArgs) -> miette::Result<()> {
         .map_err(|e| miette::miette!("failed to update package.json overrides: {e}"))?;
 
     // ── Run bun remove ────────────────────────────────────────────────────────
-    let bun = BunRunner::new(&project_dir)
+    let bun = BunRunner::new(&project_dir).await
         .map_err(|e| miette::miette!("{e}"))?;
 
     let pkg_refs: Vec<&str> = args.packages.iter().map(|s| s.as_str()).collect();

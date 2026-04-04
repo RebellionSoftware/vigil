@@ -41,6 +41,10 @@ pub fn resolve_version(
         reason: e.to_string(),
     })?;
 
+    // If the range itself explicitly contains a prerelease tag (e.g. "=1.0.0-rc.12"),
+    // npm allows matching prerelease versions — mirror that behavior.
+    let effective_prerelease = allow_prerelease || normalized.contains('-');
+
     let mut best: Option<Version> = None;
 
     for v_str in available {
@@ -50,7 +54,7 @@ pub fn resolve_version(
         };
 
         // Skip pre-releases unless explicitly allowed or the range targets one
-        if !allow_prerelease && !v.pre.is_empty() {
+        if !effective_prerelease && !v.pre.is_empty() {
             continue;
         }
 
@@ -232,5 +236,22 @@ mod tests {
         let versions = &["1.0.0", "not-a-version", "2.0.0"];
         let v = resolve_version("^1.0.0", versions, false).unwrap();
         assert_eq!(v, "1.0.0");
+    }
+
+    #[test]
+    fn exact_prerelease_range_matches_prerelease_version() {
+        // When a dep pins an exact prerelease (e.g. rolldown@1.0.0-rc.12),
+        // we must match it even with allow_prerelease=false.
+        let versions = &["1.0.0-rc.10", "1.0.0-rc.12", "1.0.0-rc.15"];
+        let v = resolve_version("1.0.0-rc.12", versions, false).unwrap();
+        assert_eq!(v, "1.0.0-rc.12");
+    }
+
+    #[test]
+    fn prerelease_range_does_not_bleed_into_unrelated_prereleases() {
+        // ^1.0.0 should NOT match prereleases even if some prerelease versions exist
+        let versions = &["1.0.0-alpha.1", "1.0.0-beta.1"];
+        let result = resolve_version("^1.0.0", versions, false);
+        assert!(result.is_err(), "no stable version available, should fail");
     }
 }

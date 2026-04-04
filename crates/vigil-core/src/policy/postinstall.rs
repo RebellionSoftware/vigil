@@ -108,6 +108,7 @@ mod tests {
             published_at: Utc::now(),
             is_direct: true,
             has_install_script: has_install_flag || scripts.iter().any(|s| ["postinstall","preinstall","install"].contains(s)),
+            days_since_prior_publish: None,
         }
     }
 
