@@ -1,8 +1,6 @@
 # Vigil
 
-> *Keeping watch so your supply chain doesn't have to be an afterthought.*
-
-A hardened package manager wrapper for the JavaScript ecosystem that prioritizes security over convenience.
+A security-focused package manager wrapper for Bun that enforces supply chain security policies before any package is installed.
 
 ## Overview
 
@@ -38,14 +36,23 @@ Vigil adds a hardened security gate that every package must pass through before 
 
 Refuses to install any package version published less than N days ago (default: 7 days). This collapses the attack window that supply chain attacks depend on — a freshly-published malicious version cannot be installed until the community has had time to notice.
 
-- Applies to both direct and transitive dependencies (configurable)
-- Bypassable per-package with `--allow-fresh` + mandatory `--reason` (logged to audit trail)
+- Applies to both direct and transitive dependencies (configurable via `transitive_age_gate`)
+- Bypassable per-package with `--allow-fresh <package> --reason "<reason>"` (both flags required; reason is logged to the audit trail)
+
+### Inactivity Detection
+
+Flags packages that were dormant for a long time and then suddenly published a new version. Sudden activity on a long-inactive package is a common indicator of account takeover.
+
+- Controlled by `inactivity_days` (default: 180)
+- Applies to transitives when `transitive_velocity_check = true`
+- Bypassable per-package via `vigil trust <package> --allow inactivity`
 
 ### Postinstall Script Blocking
 
 Lifecycle scripts (`postinstall`, `preinstall`, `install`) are **blocked by default**. Scripts are a primary vector for supply chain attacks — they run arbitrary code at install time with no review.
 
-To allow a specific package:
+To allow a specific package's scripts:
+
 ```bash
 vigil trust esbuild --allow postinstall
 vigil install esbuild
@@ -55,12 +62,7 @@ Trust decisions are recorded in the audit log with the approving user and timest
 
 ### Content Hash Pinning
 
-Every installed package is hashed (SHA-512, covering all files and their paths) and stored in `vigil.lock`. On every subsequent `vigil verify` run, the hash is recomputed from disk and compared. Any modification — injected backdoor, replaced binary, added file — produces a different digest and fails verification.
-
-```bash
-vigil verify          # re-hash all packages, compare to vigil.lock
-vigil verify --ci     # same, but exits 1 if vigil.lock is missing (for CI pipelines)
-```
+Every installed package is hashed (SHA-512, covering all files and their paths) and stored in `vigil.lock`. On every `vigil verify` run, the hash is recomputed from disk and compared. Any modification — injected backdoor, replaced binary, added file — produces a different digest and fails verification.
 
 ### Hard Blocklist
 
@@ -75,15 +77,17 @@ packages = ["malicious-pkg", "abandoned-utility"]
 
 `vigil.lock` includes a SHA-256 checksum of all package entries. If the file is manually edited or corrupted, `vigil install` and `vigil verify` hard-error rather than silently accepting a tampered state.
 
-`vigil.toml` is also hashed at install time and stored in the lockfile. `vigil verify` detects if the policy configuration has drifted since the last install.
+`vigil.toml` is also hashed at install time and stored in `vigil.lock`. `vigil verify` detects if the policy configuration has drifted since the last install.
 
 ### Overrides Drift Detection
 
-Vigil writes a `overrides` block into `package.json` to pin every transitive dependency to the exact version resolved by Vigil. `vigil verify` checks that this block matches the lockfile — detecting manual edits or out-of-band installs that bypass pinning.
+Vigil writes an `overrides` block into `package.json` to pin every transitive dependency to the exact version resolved by Vigil. `vigil verify` checks that this block matches the lockfile — detecting manual edits or out-of-band installs that bypass pinning.
+
+The overrides block is protected by a `_vigil` sentinel so Vigil can identify and manage it safely without touching any overrides you manage yourself.
 
 ### Audit Log
 
-Every install, update, remove, and trust decision is appended to `vigil-audit.log` as NDJSON, including the package, version, age at install, checks passed, approving user, and any bypass reason. The log is append-only and file-locked against concurrent writes.
+Every install, update, remove, import, and trust decision is appended to `vigil-audit.log` as NDJSON, including the package, version, age at install, checks passed, approving user, and any bypass reason. The log is append-only and file-locked against concurrent writes.
 
 ```bash
 vigil audit log                        # show all entries
@@ -91,6 +95,8 @@ vigil audit log --package esbuild      # filter by package
 vigil audit log --event install        # filter by event type
 vigil audit log --last 20              # show last 20 entries
 ```
+
+Valid event types: `install`, `update`, `remove`, `block`, `import`, `trust`.
 
 ## Architecture
 
@@ -108,6 +114,7 @@ User Command
 ┌─────────────────────────────┐
 │  Pre-flight Checks (Rust)   │
 │  - Age gate                 │
+│  - Inactivity check         │
 │  - Postinstall audit        │
 │  - Hard blocklist           │
 └────────────┬────────────────┘
@@ -127,8 +134,157 @@ User Command
 └─────────────────────────────┘
 ```
 
-**Vigil owns:** policy checks, pre-flight, post-install verification, `vigil.lock`, `vigil.toml`, audit log  
+**Vigil owns:** policy checks, pre-flight, post-install verification, `vigil.lock`, `vigil.toml`, audit log
 **Bun owns:** downloads, `node_modules` layout, `bun.lockb`
+
+## Usage
+
+### Starting a new project
+
+```bash
+vigil init
+```
+
+Creates `vigil.toml` with default policy settings and runs `bun init` to scaffold the project.
+
+### Onboarding an existing project
+
+```bash
+vigil import
+vigil import --include-dev   # also import devDependencies
+```
+
+Reads `package.json`, resolves the full dependency tree, and writes `vigil.lock`. Policy checks run but **never block** during import — existing projects may have packages that predate your policy. Packages that would be blocked on a fresh install are flagged with a warning. Any prior postinstall approvals for currently-blocked packages are revoked.
+
+If `node_modules` exists, Vigil reads exact installed versions from disk rather than resolving from the registry. Direct deps are pinned to their exact resolved versions in `package.json`; transitives are pinned via the `overrides` block.
+
+### Installing packages
+
+```bash
+# Install a package (runs all security checks first)
+vigil install axios
+
+# Install multiple packages
+vigil install express typescript
+
+# Bypass the age gate for a specific package (both flags required)
+vigil install my-new-dep --allow-fresh my-new-dep --reason "internal package, we own it"
+```
+
+### Trusting a package
+
+```bash
+# Pre-approve postinstall scripts (run before vigil install)
+vigil trust esbuild --allow postinstall
+
+# Approve an inactivity bypass
+vigil trust some-package --allow inactivity
+
+# Approve both at once
+vigil trust some-package --allow postinstall --allow inactivity
+```
+
+`vigil trust` works in two modes:
+- **Pre-install:** if the package is not yet in `vigil.lock`, writes the approval to `vigil.toml` so the subsequent install can proceed.
+- **Post-import:** if the package is already in `vigil.lock` (e.g. after `vigil import`), updates the lockfile entry directly.
+
+### Updating a package
+
+```bash
+vigil update axios
+```
+
+Resolves the latest allowed version, re-runs all policy checks, and updates `vigil.lock` and the `package.json` overrides block.
+
+### Removing a package
+
+```bash
+vigil remove lodash
+```
+
+Removes the package and cleans up any transitives that are no longer needed by other installed packages.
+
+### Verifying installed packages
+
+```bash
+# Re-hash all packages and compare to vigil.lock
+vigil verify
+
+# Same, but exit 1 if vigil.lock is missing (for CI pipelines)
+vigil verify --ci
+```
+
+`vigil verify` checks three things:
+1. SHA-512 content hash of each package in `node_modules` matches `vigil.lock`
+2. The `package.json` overrides block matches the pinned versions in `vigil.lock`
+3. `vigil.toml` has not been modified since the last install
+
+In `--ci` mode, packages whose disk hash was not yet recorded also cause a failure — every package must have been through a `vigil install` run before CI verify.
+
+## Configuration
+
+`vigil.toml` is created automatically by `vigil init` or `vigil import`. All fields shown below are the defaults.
+
+```toml
+[policy]
+# Minimum age in days before a package version can be installed.
+# Blocks versions published less than N days ago to close the rapid-publish attack window.
+min_age_days = 7
+
+# Block packages that have postinstall/preinstall/install lifecycle scripts.
+# Scripts must be explicitly trusted via `vigil trust <pkg> --allow postinstall`.
+block_postinstall = true
+
+# Apply the age gate to transitive dependencies, not just direct installs.
+transitive_age_gate = true
+
+# Flag packages that were dormant for N days and then published a new version.
+# Set to 0 to disable.
+inactivity_days = 180
+
+# Apply the inactivity check to transitive dependencies.
+transitive_velocity_check = true
+
+# Allow prerelease versions (e.g. 1.0.0-beta.1) to be resolved.
+# Prereleases pinned explicitly in a dependency's package.json are always allowed.
+allow_prerelease = false
+
+[bypass]
+# Packages that skip the age gate entirely.
+# Use for internal packages or tooling you control.
+allow_fresh = ["@my-org/internal-lib"]
+
+# Packages whose postinstall scripts are pre-approved.
+# Written automatically by `vigil trust <pkg> --allow postinstall`.
+allow_postinstall = ["esbuild"]
+
+# Packages approved despite failing the inactivity check.
+# Written automatically by `vigil trust <pkg> --allow inactivity`.
+allow_inactivity = []
+
+[blocked]
+# Hard blocklist — these packages are always rejected, regardless of other config.
+packages = ["malicious-pkg", "abandoned-utility"]
+```
+
+## vigil.lock
+
+`vigil.lock` is a TOML file that records the full resolved state of your dependency tree. It is committed to version control.
+
+Each entry in `[packages]` has the following fields:
+
+| Field | Description |
+|-------|-------------|
+| `content_hash` | SHA-512 hash of the package directory in `node_modules` (computed post-install) |
+| `published_at` | Timestamp from the npm registry for this version |
+| `age_at_install_days` | Age of the version in days at the time of install |
+| `direct` | `true` if this is a direct dependency; `false` if transitive |
+| `transitive_of` | Chain of package names that pulled in this transitive dep |
+| `postinstall_approved` | `true` if postinstall scripts have been explicitly trusted |
+| `installed_at` | Timestamp of when Vigil installed this package |
+| `installed_by` | OS username of who ran the install |
+
+The `[meta]` section stores a `packages_checksum` (SHA-256 of all package entries) for tamper detection, and a `config_hash` of `vigil.toml` at the time of the last install.
 
 ## Project Structure
 
@@ -143,77 +299,18 @@ vigil/
     └── fixtures/           # Registry response fixtures
 ```
 
-## Usage
+## What is not yet implemented
 
-```bash
-# Install a package (runs all security checks first)
-vigil install axios
+The following config options are parsed from `vigil.toml` but have no enforcement logic yet. They will silently do nothing:
 
-# Install multiple packages
-vigil install express typescript
+- `require_provenance` — Sigstore/provenance attestation (planned)
+- `typosquat_check` — typosquat detection (planned)
 
-# Update all packages to their latest allowed versions
-vigil update
+Other planned features not yet started:
 
-# Remove a package (cleans up orphaned transitives)
-vigil remove lodash
-
-# Verify all installed packages against vigil.lock
-vigil verify
-
-# Verify in CI (fails if vigil.lock is missing)
-vigil verify --ci
-
-# View the audit log
-vigil audit log
-
-# Trust a package's postinstall scripts before installing
-vigil trust esbuild --allow postinstall
-
-# Bypass the age gate with a mandatory reason
-vigil install my-new-dep --allow-fresh my-new-dep --reason "internal package, we own it"
-```
-
-## Configuration
-
-Create a `vigil.toml` in your project root:
-
-```toml
-[policy]
-# Minimum age in days before a package version can be installed.
-# Blocks versions published less than N days ago to close the rapid-publish attack window.
-# Default: 7
-min_age_days = 7
-
-# Block packages that have postinstall/preinstall/install lifecycle scripts.
-# Scripts must be explicitly trusted via `vigil trust <pkg> --allow postinstall`.
-# Default: true
-block_postinstall = true
-
-# Apply the age gate to transitive dependencies, not just direct installs.
-# Default: true
-transitive_age_gate = true
-
-# Allow prerelease versions (e.g. 1.0.0-beta.1) to be resolved.
-# Prereleases pinned explicitly in a dependency's package.json are always allowed.
-# Default: false
-allow_prerelease = false
-
-[bypass]
-# Packages that skip the age gate entirely.
-# Use for internal packages or tooling you control.
-allow_fresh = ["@my-org/internal-lib"]
-
-# Packages whose postinstall scripts are pre-approved.
-# Written automatically by `vigil trust <pkg> --allow postinstall` when the
-# package is not yet installed.
-allow_postinstall = ["esbuild"]
-
-[blocked]
-# Hard blocklist — these packages are always rejected, regardless of other config.
-# Useful for banning known-bad packages or enforcing organizational policy.
-packages = ["malicious-pkg", "abandoned-utility"]
-```
+- `vigil diff` — AST-based security diff for package updates
+- CI mode strict lockfile enforcement beyond `--ci` hash checking
+- Multi-ecosystem support (npm, uv, pip)
 
 ## Requirements
 
