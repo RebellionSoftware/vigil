@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build (${{ matrix.asset_name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            binary: vigil
+            asset_name: vigil-linux-x86_64
+
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            binary: vigil
+            asset_name: vigil-linux-aarch64
+            use_cross: true
+
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary: vigil.exe
+            asset_name: vigil-windows-x86_64.exe
+
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            binary: vigil
+            asset_name: vigil-macos-aarch64
+
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            binary: vigil
+            asset_name: vigil-macos-x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+      - name: Install cross
+        if: matrix.use_cross == true
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Build
+        shell: bash
+        run: |
+          if [ "${{ matrix.use_cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }} -p vigil-cli
+          else
+            cargo build --release --target ${{ matrix.target }} -p vigil-cli
+          fi
+
+      - name: Stage binary
+        shell: bash
+        run: cp target/${{ matrix.target }}/release/${{ matrix.binary }} ${{ matrix.asset_name }}
+
+      - name: Upload to R2
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            PREFIX="${{ github.ref_name }}"
+          else
+            PREFIX="latest"
+          fi
+
+          aws s3 cp \
+            "${{ matrix.asset_name }}" \
+            "s3://${{ secrets.R2_BUCKET_NAME }}/${PREFIX}/${{ matrix.asset_name }}" \
+            --endpoint-url "https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com" \
+            --no-progress
