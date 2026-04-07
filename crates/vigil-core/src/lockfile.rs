@@ -44,6 +44,12 @@ pub struct LockedPackage {
     pub age_at_install_days: u32,
     /// True if this is a direct (user-requested) dependency.
     pub direct: bool,
+    /// True if installed with --dev (placed in devDependencies).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dev: bool,
+    /// True if installed with --optional (placed in optionalDependencies).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub optional: bool,
     /// Names of direct packages that pulled this in (empty if direct=true).
     pub transitive_of: Vec<String>,
     /// Whether a postinstall script has been explicitly approved via `vigil trust`.
@@ -178,6 +184,8 @@ pub fn generate_from_tree(tree: &ResolvedTree, user: &str) -> VigilLockfile {
                 published_at: node.published_at,
                 age_at_install_days: age_days,
                 direct: node.is_direct,
+                dev: false,
+                optional: false,
                 transitive_of,
                 postinstall_approved: false,
                 installed_at: now,
@@ -193,16 +201,19 @@ pub fn generate_from_tree(tree: &ResolvedTree, user: &str) -> VigilLockfile {
 ///
 /// - New packages are added.
 /// - Existing packages that disappeared from the new tree are removed.
-/// - For packages in both: `postinstall_approved` is preserved from the old entry
-///   (so prior approvals survive an update), but all other fields come from the new entry.
+/// - For packages in both: install-time designations (`postinstall_approved`,
+///   `dev`, `optional`) are preserved from the old entry so that prior approvals
+///   and dependency-type classifications survive updates. All other fields (hash,
+///   published_at, age, etc.) come from the new entry.
 pub fn merge_into(existing: &mut VigilLockfile, fresh: VigilLockfile) {
     // Remove packages no longer in the tree.
     existing.packages.retain(|k, _| fresh.packages.contains_key(k));
 
     for (key, mut new_pkg) in fresh.packages {
         if let Some(old_pkg) = existing.packages.get(&key) {
-            // Preserve postinstall approval across updates.
             new_pkg.postinstall_approved = old_pkg.postinstall_approved;
+            new_pkg.dev = old_pkg.dev;
+            new_pkg.optional = old_pkg.optional;
         }
         existing.packages.insert(key, new_pkg);
     }
@@ -317,7 +328,7 @@ mod tests {
                 content_hash: "sha512-abc123".to_string(),
                 published_at: "2025-03-14T10:00:00Z".parse().unwrap(),
                 age_at_install_days: 14,
-                direct: true,
+                direct: true, dev: false, optional: false,
                 transitive_of: vec![],
                 postinstall_approved: false,
                 installed_at: Utc::now(),
@@ -330,7 +341,7 @@ mod tests {
                 content_hash: "sha512-def456".to_string(),
                 published_at: "2025-02-01T09:00:00Z".parse().unwrap(),
                 age_at_install_days: 55,
-                direct: false,
+                direct: false, dev: false, optional: false,
                 transitive_of: vec!["axios".to_string()],
                 postinstall_approved: false,
                 installed_at: Utc::now(),
@@ -490,6 +501,22 @@ updated_at = "2026-04-01T00:00:00Z"
     }
 
     #[test]
+    fn merge_preserves_dev_and_optional() {
+        let tree = make_tree_for_gen();
+        let mut existing = generate_from_tree(&tree, "user1");
+        existing.packages.get_mut("express@4.18.2").unwrap().dev = true;
+        existing.packages.get_mut("ms@2.1.3").unwrap().optional = true;
+
+        let fresh = generate_from_tree(&tree, "user2");
+        merge_into(&mut existing, fresh);
+
+        assert!(existing.packages.get("express@4.18.2").unwrap().dev,
+            "dev flag should survive merge");
+        assert!(existing.packages.get("ms@2.1.3").unwrap().optional,
+            "optional flag should survive merge");
+    }
+
+    #[test]
     fn merge_removes_dropped_packages() {
         let tree = make_tree_for_gen();
         let mut existing = generate_from_tree(&tree, "user");
@@ -498,7 +525,7 @@ updated_at = "2026-04-01T00:00:00Z"
             content_hash: "sha512-stale".into(),
             published_at: Utc::now(),
             age_at_install_days: 30,
-            direct: false,
+            direct: false, dev: false, optional: false,
             transitive_of: vec!["express".into()],
             postinstall_approved: false,
             installed_at: Utc::now(),
@@ -520,12 +547,12 @@ updated_at = "2026-04-01T00:00:00Z"
         let mut old = VigilLockfile::new();
         old.packages.insert("a@1.0.0".into(), LockedPackage {
             content_hash: "sha512-aaa".into(), published_at: Utc::now(),
-            age_at_install_days: 10, direct: true, transitive_of: vec![],
+            age_at_install_days: 10, direct: true, dev: false, optional: false, transitive_of: vec![],
             postinstall_approved: false, installed_at: Utc::now(), installed_by: "u".into(),
         });
         old.packages.insert("b@1.0.0".into(), LockedPackage {
             content_hash: "sha512-bbb".into(), published_at: Utc::now(),
-            age_at_install_days: 10, direct: false, transitive_of: vec!["a".into()],
+            age_at_install_days: 10, direct: false, dev: false, optional: false, transitive_of: vec!["a".into()],
             postinstall_approved: false, installed_at: Utc::now(), installed_by: "u".into(),
         });
 
@@ -533,14 +560,14 @@ updated_at = "2026-04-01T00:00:00Z"
         // a stays, but hash changed
         new.packages.insert("a@1.0.0".into(), LockedPackage {
             content_hash: "sha512-aaa-new".into(), published_at: Utc::now(),
-            age_at_install_days: 10, direct: true, transitive_of: vec![],
+            age_at_install_days: 10, direct: true, dev: false, optional: false, transitive_of: vec![],
             postinstall_approved: false, installed_at: Utc::now(), installed_by: "u".into(),
         });
         // b removed
         // c added
         new.packages.insert("c@2.0.0".into(), LockedPackage {
             content_hash: "sha512-ccc".into(), published_at: Utc::now(),
-            age_at_install_days: 5, direct: false, transitive_of: vec!["a".into()],
+            age_at_install_days: 5, direct: false, dev: false, optional: false, transitive_of: vec!["a".into()],
             postinstall_approved: false, installed_at: Utc::now(), installed_by: "u".into(),
         });
 

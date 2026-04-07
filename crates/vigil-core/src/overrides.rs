@@ -204,17 +204,17 @@ mod tests {
         let mut lf = VigilLockfile::new();
         lf.packages.insert("express@4.18.2".into(), LockedPackage {
             content_hash: "sha512-e".into(), published_at: Utc::now(),
-            age_at_install_days: 100, direct: true, transitive_of: vec![],
+            age_at_install_days: 100, direct: true, dev: false, optional: false, transitive_of: vec![],
             postinstall_approved: false, installed_at: Utc::now(), installed_by: "u".into(),
         });
         lf.packages.insert("ms@2.1.3".into(), LockedPackage {
             content_hash: "sha512-m".into(), published_at: Utc::now(),
-            age_at_install_days: 30, direct: false, transitive_of: vec!["express".into()],
+            age_at_install_days: 30, direct: false, dev: false, optional: false, transitive_of: vec!["express".into()],
             postinstall_approved: false, installed_at: Utc::now(), installed_by: "u".into(),
         });
         lf.packages.insert("debug@4.4.3".into(), LockedPackage {
             content_hash: "sha512-d".into(), published_at: Utc::now(),
-            age_at_install_days: 30, direct: false, transitive_of: vec!["express".into()],
+            age_at_install_days: 30, direct: false, dev: false, optional: false, transitive_of: vec!["express".into()],
             postinstall_approved: false, installed_at: Utc::now(), installed_by: "u".into(),
         });
         lf
@@ -236,7 +236,7 @@ mod tests {
         let mut lf = VigilLockfile::new();
         lf.packages.insert("@scope/pkg@1.2.3".into(), LockedPackage {
             content_hash: "sha512-s".into(), published_at: Utc::now(),
-            age_at_install_days: 10, direct: false, transitive_of: vec!["root".into()],
+            age_at_install_days: 10, direct: false, dev: false, optional: false, transitive_of: vec!["root".into()],
             postinstall_approved: false, installed_at: Utc::now(), installed_by: "u".into(),
         });
         let overrides = OverridesManager::generate_overrides(&lf);

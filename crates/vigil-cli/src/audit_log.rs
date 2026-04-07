@@ -16,7 +16,7 @@ const AUDIT_LOG_FILENAME: &str = "vigil-audit.log";
 pub struct AuditEntry {
     /// RFC 3339 timestamp of the event.
     pub ts: DateTime<Utc>,
-    /// Event type: "install", "block", "update", "remove", "verify_pass", "verify_fail".
+    /// Event type: "install", "import", "block", "update", "remove", "trust", "verify_pass", "verify_fail".
     pub event: String,
     /// Package name.
     pub package: String,
@@ -28,6 +28,12 @@ pub struct AuditEntry {
     pub checks_passed: Vec<String>,
     /// System user who triggered the event.
     pub user: String,
+    /// True if installed as a dev dependency (devDependencies).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dev: bool,
+    /// True if installed as an optional dependency (optionalDependencies).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub optional: bool,
     /// Human-readable reason (required for bypasses, optional otherwise).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
@@ -109,6 +115,7 @@ mod tests {
             age_days: 30,
             checks_passed: vec!["age-gate".to_string()],
             user: "testuser".to_string(),
+            dev: false, optional: false,
             reason: None,
         }
     }

@@ -6,6 +6,7 @@ use vigil_core::{
     hash::hash_package_dir,
     lockfile::{generate_from_tree, merge_into, VigilLockfile},
     overrides::OverridesManager,
+    package_json::{read_package_json, write_package_json},
     policy::PolicyEngine,
     resolver::DependencyResolver,
 };
@@ -18,6 +19,18 @@ use crate::{audit_log::{AuditEntry, AuditLog}, output};
 pub struct InstallArgs {
     /// Package(s) to install (e.g. "axios" or "axios@1.7.4").
     pub packages: Vec<String>,
+
+    /// Install as a dev dependency (devDependencies). All policy checks still apply.
+    /// If the package is already installed as a production dependency, it will be
+    /// reclassified to devDependencies.
+    #[arg(long, conflicts_with = "optional")]
+    pub dev: bool,
+
+    /// Install as an optional dependency (optionalDependencies). All policy checks still apply.
+    /// If the package is already installed as a production dependency, it will be
+    /// reclassified to optionalDependencies.
+    #[arg(long, conflicts_with = "dev")]
+    pub optional: bool,
 
     /// Bypass age gate for specific package(s). Requires --reason.
     #[arg(long, value_name = "PACKAGE")]
@@ -141,16 +154,108 @@ pub async fn run(args: InstallArgs) -> miette::Result<()> {
         .map(|n| n.spec.clone())
         .collect();
 
+    // Mark newly-requested direct packages with their dev/optional designation.
+    // Packages already in the lockfile (re-resolved for the full tree) retain
+    // whatever designation they had when they were first installed.
+    let new_base_names: std::collections::HashSet<&str> = args.packages
+        .iter()
+        .map(|p| pkg_base_name(p))
+        .collect();
+    for node in tree.direct_nodes() {
+        let name = node.spec.name.to_string();
+        if new_base_names.contains(name.as_str()) {
+            if let Some(pkg) = lockfile.packages.get_mut(&node.spec.to_key()) {
+                pkg.dev = args.dev;
+                pkg.optional = args.optional;
+            }
+        }
+    }
+
     // Suppress lifecycle scripts unless at least one package has approved postinstall.
     // This covers both lockfile-approved (prior trust) and config-approved (pre-trust).
     let any_approved = lockfile.packages.values().any(|p| p.postinstall_approved)
         || !config.bypass.allow_postinstall.is_empty();
     let ignore_scripts = config.policy.block_postinstall && !any_approved;
 
-    eprintln!("Running bun add…");
-    bun.add(&direct_specs, ignore_scripts)
-        .await
-        .map_err(|e| miette::miette!("bun failed: {e}"))?;
+    // Split direct_specs into newly-requested packages and already-existing ones.
+    // bun add applies --dev/--optional to EVERY package in the invocation, so
+    // passing all direct specs with a global flag would silently move existing
+    // production deps into devDependencies/optionalDependencies in package.json.
+    let (new_specs, existing_specs): (Vec<_>, Vec<_>) = direct_specs
+        .into_iter()
+        .partition(|spec| new_base_names.contains(spec.name.as_str()));
+
+    let dep_kind = if args.dev { " (dev)" } else if args.optional { " (optional)" } else { "" };
+    eprintln!("Running bun add{dep_kind}…");
+
+    // Install newly-requested packages with their correct designation.
+    if !new_specs.is_empty() {
+        // Strip new packages from peerDependencies before calling bun add.
+        // Bun does not reclassify packages that are already in peerDependencies
+        // when given --dev or --optional — it leaves them there silently.
+        // Removing them first ensures bun places them in the correct section.
+        let peer_names: std::collections::HashSet<&str> =
+            new_specs.iter().map(|s| s.name.as_str()).collect();
+        let mut pkg_json = read_package_json(&project_dir)
+            .map_err(|e| miette::miette!("failed to read package.json: {e}"))?;
+        if let Some(peers) = pkg_json.get_mut("peerDependencies").and_then(|v| v.as_object_mut()) {
+            let stale: Vec<String> = peers.keys()
+                .filter(|k| peer_names.contains(k.as_str()))
+                .cloned()
+                .collect();
+            if !stale.is_empty() {
+                for k in &stale {
+                    peers.remove(k);
+                }
+                write_package_json(&project_dir, &pkg_json)
+                    .map_err(|e| miette::miette!("failed to update package.json: {e}"))?;
+            }
+        }
+
+        bun.add(&new_specs, args.dev, args.optional, ignore_scripts)
+            .await
+            .map_err(|e| miette::miette!("bun failed: {e}"))?;
+    }
+
+    // Re-install existing direct packages grouped by their recorded designation
+    // so their package.json classification is not disturbed.
+    if !existing_specs.is_empty() {
+        // Strip existing packages from peerDependencies before calling bun add.
+        // The same bun behaviour applies: packages already in peerDependencies
+        // are not reclassified when --dev or --optional is passed.
+        let existing_peer_names: std::collections::HashSet<&str> =
+            existing_specs.iter().map(|s| s.name.as_str()).collect();
+        let mut pkg_json = read_package_json(&project_dir)
+            .map_err(|e| miette::miette!("failed to read package.json: {e}"))?;
+        if let Some(peers) = pkg_json.get_mut("peerDependencies").and_then(|v| v.as_object_mut()) {
+            let stale: Vec<String> = peers.keys()
+                .filter(|k| existing_peer_names.contains(k.as_str()))
+                .cloned()
+                .collect();
+            if !stale.is_empty() {
+                for k in &stale {
+                    peers.remove(k);
+                }
+                write_package_json(&project_dir, &pkg_json)
+                    .map_err(|e| miette::miette!("failed to update package.json: {e}"))?;
+            }
+        }
+
+        let mut groups: std::collections::BTreeMap<(bool, bool), Vec<vigil_core::types::PackageSpec>> =
+            std::collections::BTreeMap::new();
+        for spec in existing_specs {
+            let key = spec.to_key();
+            let (dev, optional) = lockfile.packages.get(&key)
+                .map(|p| (p.dev, p.optional))
+                .unwrap_or((false, false));
+            groups.entry((dev, optional)).or_default().push(spec);
+        }
+        for ((dev, optional), specs) in groups {
+            bun.add(&specs, dev, optional, ignore_scripts)
+                .await
+                .map_err(|e| miette::miette!("bun failed: {e}"))?;
+        }
+    }
 
     // ── 9. Hash installed packages and update lockfile ────────────────────────
     let node_modules = project_dir.join("node_modules");
@@ -196,6 +301,8 @@ pub async fn run(args: InstallArgs) -> miette::Result<()> {
             age_days: pkg_entry.map(|p| p.age_at_install_days).unwrap_or(0),
             checks_passed,
             user: username.clone(),
+            dev: pkg_entry.map(|p| p.dev).unwrap_or(false),
+            optional: pkg_entry.map(|p| p.optional).unwrap_or(false),
             reason: if args.allow_fresh.contains(&node.spec.name.to_string()) {
                 args.reason.clone()
             } else {
@@ -209,7 +316,7 @@ pub async fn run(args: InstallArgs) -> miette::Result<()> {
     }
 
     // ── 12. Print success ─────────────────────────────────────────────────────
-    output::print_install_success(tree.nodes.len());
+    output::print_install_success(tree.nodes.len(), args.dev, args.optional);
 
     Ok(())
 }

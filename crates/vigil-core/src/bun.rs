@@ -41,14 +41,34 @@ impl BunRunner {
         })
     }
 
-    /// Run `bun add --exact [--ignore-scripts] <name>@<version>…`.
+    /// Run `bun add --exact [--dev|--optional] [--ignore-scripts] <name>@<version>…`.
+    ///
+    /// `dev` places packages in `devDependencies`; `optional` in `optionalDependencies`.
+    /// These are mutually exclusive — callers must not set both. The flag applies to
+    /// every package in the slice, so callers are responsible for grouping packages
+    /// by type before calling this method.
     ///
     /// `ignore_scripts` should be `true` when `block_postinstall` is enabled
     /// so that Bun does not execute lifecycle scripts during installation.
-    pub async fn add(&self, packages: &[PackageSpec], ignore_scripts: bool) -> Result<()> {
+    pub async fn add(
+        &self,
+        packages: &[PackageSpec],
+        dev: bool,
+        optional: bool,
+        ignore_scripts: bool,
+    ) -> Result<()> {
+        debug_assert!(
+            !(dev && optional),
+            "dev and optional are mutually exclusive; caller must not set both"
+        );
         let mut cmd = Command::new(&self.bun_path);
         cmd.current_dir(&self.project_dir);
         cmd.arg("add").arg("--exact");
+        if dev {
+            cmd.arg("--dev");
+        } else if optional {
+            cmd.arg("--optional");
+        }
         if ignore_scripts {
             cmd.arg("--ignore-scripts");
         }

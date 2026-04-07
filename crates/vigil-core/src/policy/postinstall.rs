@@ -118,7 +118,7 @@ mod tests {
             content_hash: "sha512-fake".to_string(),
             published_at: Utc::now(),
             age_at_install_days: 30,
-            direct: true,
+            direct: true, dev: false, optional: false,
             transitive_of: vec![],
             postinstall_approved: true,
             installed_at: Utc::now(),

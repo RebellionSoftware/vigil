@@ -129,12 +129,14 @@ fn collect_section<'a>(
 }
 
 /// Print a simple success banner after a completed install.
-pub fn print_install_success(package_count: usize) {
+pub fn print_install_success(package_count: usize, dev: bool, optional: bool) {
+    let kind = if dev { " as dev dependency" } else if optional { " as optional dependency" } else { "" };
     eprintln!(
-        "\n  {} Installed {} package{}",
+        "\n  {} Installed {} package{}{}",
         CHECK.green().bold(),
         package_count,
         if package_count == 1 { "" } else { "s" },
+        kind,
     );
 }
 

@@ -168,6 +168,7 @@ pub async fn run(args: TrustArgs) -> miette::Result<()> {
             age_days: entry.age_at_install_days,
             checks_passed: vec![],
             user: username.clone(),
+            dev: false, optional: false,
             reason: Some(format!("approved: {}", args.allow.join(", "))),
         }) {
             // Trust decisions MUST be audited — fail loudly if the log write fails.

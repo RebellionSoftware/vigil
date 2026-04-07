@@ -48,6 +48,9 @@ pub async fn run(args: ImportArgs) -> miette::Result<()> {
 
     let mut specs: Vec<String> = Vec::new();
     let mut uninstalled: Vec<String> = Vec::new();
+    // Track which package names came from devDependencies so we can mark them
+    // in the lockfile after resolution. Names only — version is resolved later.
+    let mut dev_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     let dep_sections = if args.include_dev {
         vec!["dependencies", "devDependencies"]
@@ -66,6 +69,10 @@ pub async fn run(args: ImportArgs) -> miette::Result<()> {
                         "!".yellow()
                     );
                     continue;
+                }
+
+                if section == "devDependencies" {
+                    dev_names.insert(name.clone());
                 }
 
                 // Prefer the exact version already installed in node_modules over
@@ -171,7 +178,7 @@ pub async fn run(args: ImportArgs) -> miette::Result<()> {
     // Print the full check report regardless of blockers.
     output::print_check_report(&report, &tree);
 
-    // ── 6. Warn about policy violations without blocking ──────────────────────
+    // ── 7. Warn about policy violations without blocking ──────────────────────
     if report.has_blockers() {
         let blocked = report.blocked();
         let n = blocked.iter()
@@ -208,6 +215,19 @@ pub async fn run(args: ImportArgs) -> miette::Result<()> {
     // ── 8. Generate lockfile ──────────────────────────────────────────────────
     let username = whoami::username();
     let mut lockfile = generate_from_tree(&tree, &username);
+
+    // Mark direct packages that came from devDependencies.
+    if !dev_names.is_empty() {
+        for (key, pkg) in lockfile.packages.iter_mut() {
+            if !pkg.direct {
+                continue;
+            }
+            let pkg_name = key.rsplit_once('@').map(|(n, _)| n).unwrap_or(key.as_str());
+            if dev_names.contains(pkg_name) {
+                pkg.dev = true;
+            }
+        }
+    }
 
     // ── 9. Hash installed packages — skip gracefully if not on disk ───────────
     let mut hashed = 0usize;
@@ -282,12 +302,11 @@ pub async fn run(args: ImportArgs) -> miette::Result<()> {
     OverridesManager::write_overrides(&project_dir, &overrides)
         .map_err(|e| miette::miette!("failed to update package.json overrides: {e}"))?;
 
-    // ── 14. Write vigil.lock ──────────────────────────────────────────────────
-    // Preserve existing lockfile if present — merge import over it so any
-    // prior approvals (postinstall_approved, etc.) are not lost.
-    let mut final_lockfile = if let Some(mut existing) = VigilLockfile::read_optional(&project_dir)
-        .map_err(|e| miette::miette!("failed to read existing vigil.lock: {e}"))?
-    {
+    // ── 13. Write vigil.lock ──────────────────────────────────────────────────
+    // Use the lockfile snapshot loaded at step 3 — do NOT re-read from disk here.
+    // A second read_optional would reopen a TOCTOU window that step 3 was
+    // specifically designed to close.
+    let mut final_lockfile = if let Some(mut existing) = existing_lockfile {
         merge_into(&mut existing, lockfile);
         existing
     } else {
@@ -316,7 +335,7 @@ pub async fn run(args: ImportArgs) -> miette::Result<()> {
         .write(&project_dir)
         .map_err(|e| miette::miette!("failed to write vigil.lock: {e}"))?;
 
-    // ── 15. Append audit log entries ──────────────────────────────────────────
+    // ── 14. Append audit log entries ──────────────────────────────────────────
     let audit = AuditLog::new(&project_dir);
     for node in tree.all_nodes() {
         let key = node.spec.to_key();
@@ -336,6 +355,8 @@ pub async fn run(args: ImportArgs) -> miette::Result<()> {
             age_days: pkg_entry.map(|p| p.age_at_install_days).unwrap_or(0),
             checks_passed,
             user: username.clone(),
+            dev: pkg_entry.map(|p| p.dev).unwrap_or(false),
+            optional: pkg_entry.map(|p| p.optional).unwrap_or(false),
             reason: None,
         };
         if let Err(e) = audit.append(&entry) {
@@ -343,7 +364,7 @@ pub async fn run(args: ImportArgs) -> miette::Result<()> {
         }
     }
 
-    // ── 16. Print summary ─────────────────────────────────────────────────────
+    // ── 15. Print summary ─────────────────────────────────────────────────────
     eprintln!("\n  {} Imported {} package{} into vigil.lock",
         "✓".green().bold(),
         tree.nodes.len(),

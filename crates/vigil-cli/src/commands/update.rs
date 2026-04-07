@@ -191,6 +191,8 @@ pub async fn run(args: UpdateArgs) -> miette::Result<()> {
                 .map(|r| r.check_name.to_string())
                 .collect(),
             user: username.clone(),
+            dev: pkg_entry.map(|p| p.dev).unwrap_or(false),
+            optional: pkg_entry.map(|p| p.optional).unwrap_or(false),
             reason: if args.allow_fresh.contains(&name.to_string()) {
                 args.reason.clone()
             } else {

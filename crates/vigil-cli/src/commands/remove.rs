@@ -83,6 +83,7 @@ pub async fn run(args: RemoveArgs) -> miette::Result<()> {
             age_days: 0,
             checks_passed: vec![],
             user: username.clone(),
+            dev: false, optional: false,
             reason: None,
         }) {
             eprintln!("  {} failed to write audit log: {e}", "!".yellow());
@@ -102,6 +103,7 @@ pub async fn run(args: RemoveArgs) -> miette::Result<()> {
             age_days: 0,
             checks_passed: vec![],
             user: username.clone(),
+            dev: false, optional: false,
             reason: Some(format!("orphaned transitive of {}", removed_names.iter().cloned().collect::<Vec<_>>().join(", "))),
         }) {
             eprintln!("  {} failed to write audit log: {e}", "!".yellow());
@@ -169,6 +171,8 @@ mod tests {
             published_at: Utc::now(),
             age_at_install_days: 30,
             direct,
+            dev: false,
+            optional: false,
             transitive_of: transitive_of.iter().map(|s| s.to_string()).collect(),
             postinstall_approved: false,
             installed_at: Utc::now(),
