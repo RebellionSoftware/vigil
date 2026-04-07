@@ -167,6 +167,12 @@ vigil install axios
 # Install multiple packages
 vigil install express typescript
 
+# Install as a dev dependency
+vigil install typescript --dev
+
+# Install as an optional dependency
+vigil install fsevents --optional
+
 # Bypass the age gate for a specific package (both flags required)
 vigil install my-new-dep --allow-fresh my-new-dep --reason "internal package, we own it"
 ```
@@ -283,6 +289,8 @@ Each entry in `[packages]` has the following fields:
 | `postinstall_approved` | `true` if postinstall scripts have been explicitly trusted |
 | `installed_at` | Timestamp of when Vigil installed this package |
 | `installed_by` | OS username of who ran the install |
+| `dev` | `true` if installed as a dev dependency (omitted otherwise) |
+| `optional` | `true` if installed as an optional dependency (omitted otherwise) |
 
 The `[meta]` section stores a `packages_checksum` (SHA-256 of all package entries) for tamper detection, and a `config_hash` of `vigil.toml` at the time of the last install.
 
