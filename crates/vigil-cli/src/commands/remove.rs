@@ -73,6 +73,9 @@ pub async fn run(args: RemoveArgs) -> miette::Result<()> {
     // ── Remove direct packages ────────────────────────────────────────────────
     for key in &direct_keys {
         let (name, version) = key.rsplit_once('@').unwrap_or((key.as_str(), ""));
+        let (dev, optional) = lockfile.packages.get(key)
+            .map(|p| (p.dev, p.optional))
+            .unwrap_or_default();
         lockfile.packages.remove(key);
         eprintln!("  {} {key}", "-".red().bold());
         if let Err(e) = audit.append(&AuditEntry {
@@ -83,7 +86,7 @@ pub async fn run(args: RemoveArgs) -> miette::Result<()> {
             age_days: 0,
             checks_passed: vec![],
             user: username.clone(),
-            dev: false, optional: false,
+            dev, optional,
             reason: None,
         }) {
             eprintln!("  {} failed to write audit log: {e}", "!".yellow());
@@ -93,6 +96,9 @@ pub async fn run(args: RemoveArgs) -> miette::Result<()> {
     // ── Remove orphaned transitives ───────────────────────────────────────────
     for orphan_key in &orphan_keys {
         let (oname, over) = orphan_key.rsplit_once('@').unwrap_or((orphan_key.as_str(), ""));
+        let (dev, optional) = lockfile.packages.get(orphan_key)
+            .map(|p| (p.dev, p.optional))
+            .unwrap_or_default();
         lockfile.packages.remove(orphan_key);
         eprintln!("  {} {} (orphaned transitive)", "-".red(), orphan_key);
         if let Err(e) = audit.append(&AuditEntry {
@@ -103,7 +109,7 @@ pub async fn run(args: RemoveArgs) -> miette::Result<()> {
             age_days: 0,
             checks_passed: vec![],
             user: username.clone(),
-            dev: false, optional: false,
+            dev, optional,
             reason: Some(format!("orphaned transitive of {}", removed_names.iter().cloned().collect::<Vec<_>>().join(", "))),
         }) {
             eprintln!("  {} failed to write audit log: {e}", "!".yellow());
