@@ -6,6 +6,7 @@ use vigil_core::{
     config::VigilConfig,
     lockfile::VigilLockfile,
     overrides::OverridesManager,
+    types::PackageName,
 };
 use owo_colors::OwoColorize;
 
@@ -18,13 +19,18 @@ pub struct RemoveArgs {
 }
 
 pub async fn run(args: RemoveArgs) -> miette::Result<()> {
-    if args.packages.is_empty() {
-        return Err(miette::miette!("specify at least one package to remove"));
-    }
-
     let project_dir = env::current_dir()
         .map_err(|e| miette::miette!("cannot determine current directory: {e}"))?;
 
+    // Validate inputs before any I/O — cheap checks should precede disk reads.
+    if args.packages.is_empty() {
+        return Err(miette::miette!("specify at least one package to remove"));
+    }
+    let validated: Vec<PackageName> = args.packages.iter()
+        .map(|n| PackageName::new(n).map_err(|e| miette::miette!("invalid package name '{n}': {e}")))
+        .collect::<miette::Result<_>>()?;
+
+    // Load config to fail loudly on a malformed vigil.toml before touching the lockfile.
     let _config = VigilConfig::load(&project_dir)
         .map_err(|e| miette::miette!("failed to load vigil.toml: {e}"))?;
 
@@ -40,7 +46,7 @@ pub async fn run(args: RemoveArgs) -> miette::Result<()> {
     let mut direct_keys: Vec<String> = Vec::new();
     let mut removed_names: HashSet<String> = HashSet::new();
 
-    for pkg_name in &args.packages {
+    for pkg_name in &validated {
         let key = lockfile.packages.iter()
             .find(|(k, p)| {
                 p.direct && k.rsplit_once('@').map(|(n, _)| n) == Some(pkg_name.as_str())
@@ -50,7 +56,7 @@ pub async fn run(args: RemoveArgs) -> miette::Result<()> {
         match key {
             Some(k) => {
                 direct_keys.push(k);
-                removed_names.insert(pkg_name.clone());
+                removed_names.insert(pkg_name.to_string());
             }
             None => {
                 eprintln!("  {} '{}' not found in vigil.lock — skipping", "!".yellow(), pkg_name);
@@ -72,7 +78,8 @@ pub async fn run(args: RemoveArgs) -> miette::Result<()> {
 
     // ── Remove direct packages ────────────────────────────────────────────────
     for key in &direct_keys {
-        let (name, version) = key.rsplit_once('@').unwrap_or((key.as_str(), ""));
+        let (name, version) = key.rsplit_once('@')
+            .expect("lockfile key missing '@' — integrity check should have caught this");
         let (dev, optional) = lockfile.packages.get(key)
             .map(|p| (p.dev, p.optional))
             .unwrap_or_default();
@@ -95,7 +102,8 @@ pub async fn run(args: RemoveArgs) -> miette::Result<()> {
 
     // ── Remove orphaned transitives ───────────────────────────────────────────
     for orphan_key in &orphan_keys {
-        let (oname, over) = orphan_key.rsplit_once('@').unwrap_or((orphan_key.as_str(), ""));
+        let (oname, over) = orphan_key.rsplit_once('@')
+            .expect("lockfile key missing '@' — integrity check should have caught this");
         let (dev, optional) = lockfile.packages.get(orphan_key)
             .map(|p| (p.dev, p.optional))
             .unwrap_or_default();
@@ -125,7 +133,7 @@ pub async fn run(args: RemoveArgs) -> miette::Result<()> {
     let bun = BunRunner::new(&project_dir).await
         .map_err(|e| miette::miette!("{e}"))?;
 
-    let pkg_refs: Vec<&str> = args.packages.iter().map(|s| s.as_str()).collect();
+    let pkg_refs: Vec<&str> = validated.iter().map(|n| n.as_str()).collect();
     bun.remove(&pkg_refs)
         .await
         .map_err(|e| miette::miette!("bun failed: {e}"))?;
@@ -138,7 +146,7 @@ pub async fn run(args: RemoveArgs) -> miette::Result<()> {
     eprintln!(
         "\n  {} Removed {}",
         "✓".green().bold(),
-        args.packages.join(", "),
+        validated.iter().map(|n| n.as_str()).collect::<Vec<_>>().join(", "),
     );
     Ok(())
 }
