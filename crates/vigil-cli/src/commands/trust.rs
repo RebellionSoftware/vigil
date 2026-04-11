@@ -170,6 +170,7 @@ pub async fn run(args: TrustArgs) -> miette::Result<()> {
             user: username.clone(),
             dev: entry.dev, optional: entry.optional,
             reason: Some(format!("approved: {}", args.allow.join(", "))),
+            prev_hash: None,
         }) {
             // Trust decisions MUST be audited — fail loudly if the log write fails.
             return Err(miette::miette!("failed to write trust decision to audit log: {e}"));

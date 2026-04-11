@@ -358,6 +358,7 @@ pub async fn run(args: ImportArgs) -> miette::Result<()> {
             dev: pkg_entry.map(|p| p.dev).unwrap_or(false),
             optional: pkg_entry.map(|p| p.optional).unwrap_or(false),
             reason: None,
+            prev_hash: None,
         };
         if let Err(e) = audit.append(&entry) {
             eprintln!("  {} failed to write audit log: {e}", "!".yellow());

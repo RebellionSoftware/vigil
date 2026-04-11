@@ -95,6 +95,7 @@ pub async fn run(args: RemoveArgs) -> miette::Result<()> {
             user: username.clone(),
             dev, optional,
             reason: None,
+            prev_hash: None,
         }) {
             eprintln!("  {} failed to write audit log: {e}", "!".yellow());
         }
@@ -119,6 +120,7 @@ pub async fn run(args: RemoveArgs) -> miette::Result<()> {
             user: username.clone(),
             dev, optional,
             reason: Some(format!("orphaned transitive of {}", removed_names.iter().cloned().collect::<Vec<_>>().join(", "))),
+            prev_hash: None,
         }) {
             eprintln!("  {} failed to write audit log: {e}", "!".yellow());
         }

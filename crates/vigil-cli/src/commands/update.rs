@@ -209,6 +209,7 @@ pub async fn run(args: UpdateArgs) -> miette::Result<()> {
             } else {
                 None
             },
+            prev_hash: None,
         };
         if let Err(e) = audit.append(&entry) {
             eprintln!("  {} failed to write audit log: {e}", "!".yellow());

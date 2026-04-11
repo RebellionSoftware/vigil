@@ -316,6 +316,7 @@ pub async fn run(args: InstallArgs) -> miette::Result<()> {
             } else {
                 None
             },
+            prev_hash: None,
         };
 
         if let Err(e) = audit.append(&entry) {
