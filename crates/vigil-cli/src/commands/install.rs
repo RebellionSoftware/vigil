@@ -9,6 +9,7 @@ use vigil_core::{
     package_json::{read_package_json, write_package_json},
     policy::PolicyEngine,
     resolver::DependencyResolver,
+    types::PackageName,
 };
 use vigil_registry::NpmRegistryClient;
 
@@ -58,6 +59,13 @@ fn pkg_base_name(spec: &str) -> &str {
 pub async fn run(args: InstallArgs) -> miette::Result<()> {
     let project_dir = env::current_dir()
         .map_err(|e| miette::miette!("cannot determine current directory: {e}"))?;
+
+    // Validate --allow-fresh names before any I/O — bypass flags are the
+    // highest-trust inputs and must be checked before network calls or disk reads.
+    for name in &args.allow_fresh {
+        PackageName::new(name)
+            .map_err(|e| miette::miette!("invalid package name '{name}': {e}"))?;
+    }
 
     // ── 1. Load config (with hash for vigil.toml integrity tracking) ─────────
     let (config, config_hash) = VigilConfig::load_with_hash(&project_dir)

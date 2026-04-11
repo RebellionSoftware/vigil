@@ -8,6 +8,7 @@ use vigil_core::{
     overrides::OverridesManager,
     policy::PolicyEngine,
     resolver::DependencyResolver,
+    types::PackageName,
 };
 use vigil_registry::NpmRegistryClient;
 use owo_colors::OwoColorize;
@@ -39,6 +40,16 @@ pub struct UpdateArgs {
 pub async fn run(args: UpdateArgs) -> miette::Result<()> {
     let project_dir = env::current_dir()
         .map_err(|e| miette::miette!("cannot determine current directory: {e}"))?;
+
+    // Validate user-supplied package names and bypass flags before any I/O.
+    for name in &args.packages {
+        PackageName::new(name)
+            .map_err(|e| miette::miette!("invalid package name '{name}': {e}"))?;
+    }
+    for name in &args.allow_fresh {
+        PackageName::new(name)
+            .map_err(|e| miette::miette!("invalid package name '{name}': {e}"))?;
+    }
 
     let (config, config_hash) = VigilConfig::load_with_hash(&project_dir)
         .map_err(|e| miette::miette!("failed to load vigil.toml: {e}"))?;
