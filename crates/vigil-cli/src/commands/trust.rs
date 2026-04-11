@@ -37,8 +37,8 @@ pub async fn run(args: TrustArgs) -> miette::Result<()> {
     // vigil.toml. An unvalidated name stored in allow_inactivity or allow_postinstall
     // would silently fail to match at check time (the check compares against validated
     // PackageName strings), making the bypass ineffective without any error.
-    PackageName::new(&args.package)
-        .map_err(|_| miette::miette!("invalid package name: '{}'", args.package))?;
+    let pkg = PackageName::new(&args.package)
+        .map_err(|e| miette::miette!("invalid package name '{}': {e}", args.package))?;
 
     if args.allow.is_empty() {
         return Err(miette::miette!(
@@ -66,7 +66,7 @@ pub async fn run(args: TrustArgs) -> miette::Result<()> {
     let matched_keys: Vec<String> = lockfile_opt.as_ref().map(|lf| {
         lf.packages
             .keys()
-            .filter(|k| k.rsplit_once('@').map(|(n, _)| n) == Some(args.package.as_str()))
+            .filter(|k| k.rsplit_once('@').map(|(n, _)| n) == Some(pkg.as_str()))
             .cloned()
             .collect()
     }).unwrap_or_default();
@@ -80,12 +80,12 @@ pub async fn run(args: TrustArgs) -> miette::Result<()> {
             let mut config = VigilConfig::load(&project_dir)
                 .map_err(|e| miette::miette!("failed to load vigil.toml: {e}"))?;
 
-            if has_postinstall && !config.bypass.allow_postinstall.contains(&args.package) {
-                config.bypass.allow_postinstall.push(args.package.clone());
+            if has_postinstall && !config.bypass.allow_postinstall.contains(&pkg.to_string()) {
+                config.bypass.allow_postinstall.push(pkg.to_string());
             }
 
-            if has_inactivity && !config.bypass.allow_inactivity.contains(&args.package) {
-                config.bypass.allow_inactivity.push(args.package.clone());
+            if has_inactivity && !config.bypass.allow_inactivity.contains(&pkg.to_string()) {
+                config.bypass.allow_inactivity.push(pkg.to_string());
             }
 
             write_vigil_toml(&project_dir, &config)?;
@@ -133,8 +133,8 @@ pub async fn run(args: TrustArgs) -> miette::Result<()> {
     if args.allow.contains(&PERMISSION_INACTIVITY.to_string()) {
         let mut config = VigilConfig::load(&project_dir)
             .map_err(|e| miette::miette!("failed to load vigil.toml: {e}"))?;
-        if !config.bypass.allow_inactivity.contains(&args.package) {
-            config.bypass.allow_inactivity.push(args.package.clone());
+        if !config.bypass.allow_inactivity.contains(&pkg.to_string()) {
+            config.bypass.allow_inactivity.push(pkg.to_string());
             write_vigil_toml(&project_dir, &config)?;
         }
         eprintln!(
