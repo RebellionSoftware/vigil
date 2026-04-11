@@ -1,11 +1,12 @@
+use chrono::{DateTime, Utc};
+use fd_lock::RwLock as FdRwLock;
+use owo_colors::OwoColorize;
+use serde::{Deserialize, Serialize};
 use std::{
     fs::OpenOptions,
     io::{BufRead, BufReader, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
 };
-use chrono::{DateTime, Utc};
-use fd_lock::RwLock as FdRwLock;
-use serde::{Deserialize, Serialize};
 
 const AUDIT_LOG_FILENAME: &str = "vigil-audit.log";
 
@@ -70,8 +71,7 @@ impl AuditLog {
         // another process has written since we opened the file.
         guard.seek(SeekFrom::End(0))?;
 
-        let line = serde_json::to_string(entry)
-            .expect("AuditEntry is always serializable");
+        let line = serde_json::to_string(entry).expect("AuditEntry is always serializable");
         writeln!(*guard, "{line}")?;
         // Flush kernel page cache to disk before releasing the lock so audit
         // entries are durable even if the process crashes immediately after.
@@ -79,11 +79,15 @@ impl AuditLog {
     }
 
     /// Read all entries from the log. Returns an empty vec if the file does not exist.
+    ///
+    /// Lines that cannot be parsed as `AuditEntry` are skipped with a warning printed
+    /// to stderr. Parsing continues for all remaining lines after a malformed line.
     pub fn read_all(&self) -> std::io::Result<Vec<AuditEntry>> {
-        if !self.path.exists() {
-            return Ok(vec![]);
-        }
-        let file = std::fs::File::open(&self.path)?;
+        let file = match std::fs::File::open(&self.path) {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+            Err(e) => return Err(e),
+        };
         let reader = BufReader::new(file);
         let mut entries = Vec::new();
         for line in reader.lines() {
@@ -94,9 +98,19 @@ impl AuditLog {
             }
             if let Ok(entry) = serde_json::from_str::<AuditEntry>(trimmed) {
                 entries.push(entry);
+            } else {
+                // Strip control characters before printing to stderr to prevent
+                // ANSI escape injection from a crafted log file.
+                const MAX_DISPLAY: usize = 120;
+                let safe: String = trimmed.chars().filter(|c| !c.is_control()).take(MAX_DISPLAY).collect();
+                let ellipsis = if trimmed.len() > MAX_DISPLAY { "…" } else { "" };
+                eprintln!(
+                    "  {} warning: skipped malformed line in {}: {}{ellipsis}",
+                    "!".yellow(),
+                    AUDIT_LOG_FILENAME,
+                    safe,
+                );
             }
-            // Silently skip malformed lines — the log is append-only and
-            // a future version may add new fields that older readers ignore.
         }
         Ok(entries)
     }
@@ -115,7 +129,8 @@ mod tests {
             age_days: 30,
             checks_passed: vec!["age-gate".to_string()],
             user: "testuser".to_string(),
-            dev: false, optional: false,
+            dev: false,
+            optional: false,
             reason: None,
         }
     }
@@ -148,7 +163,10 @@ mod tests {
         log.append(&sample_entry("install", "pkg")).unwrap();
 
         let raw = std::fs::read_to_string(dir.path().join("vigil-audit.log")).unwrap();
-        assert!(!raw.contains("reason"), "reason field should be omitted when None: {raw}");
+        assert!(
+            !raw.contains("reason"),
+            "reason field should be omitted when None: {raw}"
+        );
     }
 
     #[test]
@@ -160,19 +178,38 @@ mod tests {
         log.append(&e).unwrap();
 
         let raw = std::fs::read_to_string(dir.path().join("vigil-audit.log")).unwrap();
-        assert!(raw.contains("trusted internal package"), "reason should appear in log: {raw}");
+        assert!(
+            raw.contains("trusted internal package"),
+            "reason should appear in log: {raw}"
+        );
     }
 
     #[test]
+    // The warning is emitted to stderr but not captured here; the test verifies
+    // the entry is skipped and parsing does not abort.
     fn skips_malformed_lines() {
         let dir = tempfile::tempdir().unwrap();
         let log = AuditLog::new(dir.path());
         let path = dir.path().join("vigil-audit.log");
-        // Write one good line and one bad line
         let good = serde_json::to_string(&sample_entry("install", "ms")).unwrap();
         std::fs::write(&path, format!("{good}\nnot-json\n")).unwrap();
 
         let entries = log.read_all().unwrap();
-        assert_eq!(entries.len(), 1, "malformed line should be silently skipped");
+        assert_eq!(entries.len(), 1, "malformed line should be skipped");
+    }
+
+    #[test]
+    fn continues_parsing_after_malformed_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = AuditLog::new(dir.path());
+        let path = dir.path().join("vigil-audit.log");
+        let good1 = serde_json::to_string(&sample_entry("install", "ms")).unwrap();
+        let good2 = serde_json::to_string(&sample_entry("install", "express")).unwrap();
+        std::fs::write(&path, format!("{good1}\nnot-json\n{good2}\n")).unwrap();
+
+        let entries = log.read_all().unwrap();
+        assert_eq!(entries.len(), 2, "valid entries after a malformed line must be parsed");
+        assert_eq!(entries[0].package, "ms");
+        assert_eq!(entries[1].package, "express");
     }
 }
