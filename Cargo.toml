@@ -41,6 +41,7 @@ semver = "1"
 
 # Hashing
 sha2 = "0.10"
+hex = "0.4"
 
 # Directory walking
 walkdir = "2"

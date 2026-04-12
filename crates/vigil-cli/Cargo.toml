@@ -23,6 +23,7 @@ whoami = { workspace = true }
 owo-colors = { workspace = true }
 fd-lock = { workspace = true }
 sha2 = { workspace = true }
+hex = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
