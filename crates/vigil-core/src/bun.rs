@@ -16,7 +16,7 @@ pub struct BunRunner {
 impl BunRunner {
     /// Find `bun` in `$PATH` and verify it is executable.
     ///
-    /// Returns `Err(Error::BunNotFound)` if `bun` is not available.
+    /// Returns `Err(Error::PackageManagerNotFound)` if `bun` is not found in `$PATH`.
     ///
     /// Uses `spawn_blocking` so the probe does not block a Tokio worker thread.
     pub async fn new(project_dir: &Path) -> Result<Self> {
@@ -28,11 +28,11 @@ impl BunRunner {
                 .status()
         })
         .await
-        .map_err(|_| Error::BunNotFound)? // JoinError — task panicked
-        .map_err(|_| Error::BunNotFound)?; // io::Error — bun not in PATH
+        .map_err(|_| Error::PackageManagerNotFound("bun".to_string()))? // JoinError — task panicked
+        .map_err(|_| Error::PackageManagerNotFound("bun".to_string()))?; // io::Error — bun not in PATH
 
         if !status.success() {
-            return Err(Error::BunNotFound);
+            return Err(Error::PackageManagerNotFound("bun".to_string()));
         }
 
         Ok(BunRunner {
@@ -97,12 +97,15 @@ impl BunRunner {
             .arg("init")
             .status()
             .await
-            .map_err(|_| Error::BunNotFound)?;
+            .map_err(|_| Error::PackageManagerNotFound("bun".to_string()))?;
 
         if !status.success() {
-            return Err(Error::BunFailed {
+            return Err(Error::PackageManagerFailed {
+                manager: "bun".to_string(),
                 status: status.code().unwrap_or(-1),
-                output: "bun init failed".to_string(),
+                // `bun init` inherits the terminal (stdin/stdout/stderr are not piped),
+                // so there is no captured output to report.
+                output: String::new(),
             });
         }
         Ok(())
@@ -126,7 +129,7 @@ impl BunRunner {
             .stderr(std::process::Stdio::piped())
             .output()
             .await
-            .map_err(|_| Error::BunNotFound)?;
+            .map_err(|_| Error::PackageManagerNotFound("bun".to_string()))?;
 
         if output.status.success() {
             return Ok(());
@@ -138,7 +141,7 @@ impl BunRunner {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr),
         );
-        Err(Error::BunFailed { status: code, output: combined })
+        Err(Error::PackageManagerFailed { manager: "bun".to_string(), status: code, output: combined })
     }
 }
 
@@ -146,7 +149,7 @@ impl BunRunner {
 mod tests {
     use super::*;
 
-    /// Verify that `BunRunner::new` returns `BunNotFound` when the binary
+    /// Verify that `run` returns `PackageManagerNotFound` when the binary
     /// does not exist. We test this by constructing a runner manually with a
     /// bogus path and calling `run` directly.
     #[tokio::test]
@@ -158,6 +161,6 @@ mod tests {
         let mut cmd = Command::new(&runner.bun_path);
         cmd.arg("--version");
         let result = runner.run(cmd).await;
-        assert!(matches!(result, Err(Error::BunNotFound)));
+        assert!(matches!(result, Err(Error::PackageManagerNotFound(_))));
     }
 }

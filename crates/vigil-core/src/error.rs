@@ -36,11 +36,15 @@ pub enum Error {
         actual: String,
     },
 
-    #[error("Bun not found in PATH. Please install Bun: https://bun.sh")]
-    BunNotFound,
+    #[error("{0} not found in PATH. Please install it.")]
+    PackageManagerNotFound(String),
 
-    #[error("Bun exited with status {status}:\n{output}")]
-    BunFailed { status: i32, output: String },
+    #[error("{manager} exited with status {status}:\n{output}")]
+    PackageManagerFailed {
+        manager: String,
+        status: i32,
+        output: String,
+    },
 
     #[error("vigil.lock packages checksum mismatch — the file may have been tampered with or corrupted. Delete vigil.lock and re-run `vigil install` to recover.")]
     LockfileChecksumMismatch,

@@ -86,7 +86,7 @@ pub async fn run(args: InitArgs) -> miette::Result<()> {
         .map_err(|e| miette::miette!("{e}"))?;
 
     bun.init().await
-        .map_err(|e| miette::miette!("bun init failed: {e}"))?;
+        .map_err(|e| miette::miette!("{e}"))?;
 
     eprintln!("\n  {} Project initialised. Next steps:", "✓".green().bold());
     eprintln!("     vigil install <package>   install your first dependency");
