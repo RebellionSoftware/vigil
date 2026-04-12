@@ -97,7 +97,7 @@ impl PolicyConfig {
     /// values for `u32` fields). This method catches semantic errors that the
     /// type system cannot express: values that are syntactically valid but
     /// operationally nonsensical.
-    pub fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         if self.min_age_days > 365 {
             return Err(Error::Config(format!(
                 "policy.min_age_days = {} is unreasonably large (maximum is 365 days). \
@@ -225,6 +225,7 @@ packages = ["colors", "faker"]
         assert_eq!(config.bypass.allow_fresh, vec!["@internal/shared"]);
         assert_eq!(config.blocked.packages, vec!["colors", "faker"]);
         assert_eq!(config.policy.inactivity_days, 90);
+        assert!(config.policy.validate().is_ok());
     }
 
     #[test]
@@ -232,6 +233,7 @@ packages = ["colors", "faker"]
         let config: VigilConfig = toml::from_str("").unwrap();
         assert_eq!(config.policy.min_age_days, 7);
         assert!(config.policy.block_postinstall);
+        assert!(config.policy.validate().is_ok());
     }
 
     #[test]
@@ -305,6 +307,36 @@ packages = ["colors", "faker"]
     fn inactivity_days_equal_to_min_age_days_passes() {
         let mut p = PolicyConfig::default();
         p.min_age_days = 30;
+        p.inactivity_days = 30;
+        assert!(p.validate().is_ok());
+    }
+
+    #[test]
+    fn inactivity_days_at_maximum_passes() {
+        let mut p = PolicyConfig::default();
+        p.min_age_days = 7;
+        p.inactivity_days = 3650;
+        assert!(p.validate().is_ok());
+    }
+
+    #[test]
+    fn both_checks_disabled_passes() {
+        // min_age_days = 0 disables the age gate; inactivity_days = 0 disables
+        // inactivity detection. Both disabled is a valid (if weak) configuration.
+        let mut p = PolicyConfig::default();
+        p.min_age_days = 0;
+        p.inactivity_days = 0;
+        assert!(p.validate().is_ok());
+    }
+
+    #[test]
+    fn age_gate_disabled_inactivity_enabled_passes() {
+        // min_age_days = 0 + non-zero inactivity_days is an odd combination —
+        // the age gate is off but inactivity detection still fires. The ordering
+        // constraint (inactivity >= min_age) uses inactivity_days > 0 as a guard,
+        // so 30 > 0 && 30 < 0 is false and this correctly passes validation.
+        let mut p = PolicyConfig::default();
+        p.min_age_days = 0;
         p.inactivity_days = 30;
         assert!(p.validate().is_ok());
     }

@@ -335,6 +335,9 @@ Understanding what Vigil guarantees — and what it explicitly does not — is e
 - **`vigil.lock` integrity depends on the filesystem.** If an attacker has write access to your project directory, they can also tamper with `vigil.lock`. Vigil's lockfile checksum detects accidental corruption and naive edits, but is not a substitute for filesystem access controls.
 - **The audit log is tamper-evident, not tamper-proof.** A local attacker with write access can replace the entire log (defeating the chain). Commit `vigil-audit.log` to version control to make tampering visible in git history.
 - **Vigil does not protect against a compromised build host.** If the machine running `vigil install` is already compromised, all bets are off.
+- **Running `bun add` directly bypasses all Vigil checks.** Any package installed via Bun outside of `vigil install` skips the age gate, inactivity check, postinstall block, and hard blocklist, and is not recorded in the audit log. Enforce Vigil-only installs through team convention, CI enforcement (`vigil verify --ci` will reject packages not in `vigil.lock`), and optionally shell aliases or wrapper scripts.
+- **`vigil import` does not block policy violations — it warns only.** The initial baseline established by `vigil import` may contain packages that would be blocked on a fresh `vigil install`. Review import warnings and use `vigil trust` or `[blocked]` to address them before treating the lockfile as a hardened security baseline.
+- **Policy checks are conditional on your configuration.** Setting `min_age_days = 0` and `block_postinstall = false` disables those checks entirely. Vigil enforces whatever policy you configure — it does not warn when the effective configuration provides minimal protection.
 
 ### Assumed trust boundary
 
@@ -352,8 +355,10 @@ If any of these assumptions do not hold in your threat model, layer additional c
 # Recommended order in CI — verify before install
 - run: vigil verify --ci --git   # fails if lockfile is missing, tampered, or uncommitted
 - run: vigil audit verify        # fails if audit log chain is broken
-- run: bun install               # or vigil install for fresh environments
+- run: vigil install             # reinstalls from vigil.lock with full policy enforcement
 ```
+
+> **Do not substitute `bun install` in CI.** Running `bun install` bypasses all Vigil policy checks — no age gate, no postinstall blocking, no audit log entry.
 
 `vigil verify --ci` exits 1 if `vigil.lock` is missing or any hash mismatches. `vigil verify --git` additionally warns (and in `--ci` mode, fails) if `vigil.lock` has uncommitted local changes. Run verification **before** install in CI to catch a tampered lockfile before it can influence the build.
 
