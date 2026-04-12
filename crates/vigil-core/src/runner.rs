@@ -56,6 +56,10 @@ impl RunnerFactory {
     ) -> Result<Box<dyn PackageRunner>> {
         match package_manager {
             "bun" => Ok(Box::new(BunRunner::new(project_dir).await?)),
+            // TODO(Task 4): add "npm" arm once NpmRunner is implemented.
+            // config.rs accepts "npm" as a valid config value, but the runner arm
+            // does not exist yet — a user who sets package_manager = "npm" will
+            // hit this error until Task 4 lands.
             other => Err(Error::Config(format!(
                 "unknown package_manager '{other}' — supported values: bun, npm"
             ))),
@@ -74,6 +78,18 @@ mod tests {
         assert!(
             matches!(result, Err(Error::Config(_))),
             "unknown package manager should return Error::Config, got: {result:?}",
+        );
+    }
+
+    /// "npm" is accepted by config validation but has no runner yet (until Task 4).
+    /// Pin this behaviour so the test fails visibly when Task 4 wires it up.
+    #[tokio::test]
+    async fn create_npm_returns_config_error_until_task4() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = RunnerFactory::create(dir.path(), "npm").await;
+        assert!(
+            matches!(result, Err(Error::Config(_))),
+            "npm should return Error::Config until NpmRunner is implemented, got: {result:?}",
         );
     }
 

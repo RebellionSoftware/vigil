@@ -49,7 +49,11 @@ impl VigilConfig {
         let digest = Sha256::digest(contents.as_bytes());
         let hash = format!("{digest:x}");
         let config: VigilConfig = toml::from_str(&contents)?;
-        config.policy.validate()?;
+        // Validate package_manager first — it is a top-level structural field
+        // whose value gates which runner is created. "npm" is accepted here even
+        // though NpmRunner does not exist yet; RunnerFactory::create will return
+        // Error::Config for "npm" until Task 4 adds the implementation.
+        // TODO(Task 4): remove this note once NpmRunner is wired into RunnerFactory.
         match config.package_manager.as_str() {
             "bun" | "npm" => {}
             other => {
@@ -58,6 +62,7 @@ impl VigilConfig {
                 )))
             }
         }
+        config.policy.validate()?;
         Ok((config, Some(hash)))
     }
 }
@@ -381,11 +386,15 @@ packages = ["colors", "faker"]
     }
 
     #[test]
-    fn package_manager_npm_parses_correctly() {
-        let toml = r#"package_manager = "npm""#;
-        let config: VigilConfig = toml::from_str(toml).unwrap();
+    fn package_manager_npm_passes_load_validation() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("vigil.toml"),
+            "package_manager = \"npm\"\n",
+        )
+        .unwrap();
+        let (config, _) = VigilConfig::load_with_hash(dir.path()).unwrap();
         assert_eq!(config.package_manager, "npm");
-        assert!(VigilConfig::load_with_hash(&std::env::temp_dir()).is_ok());
     }
 
     #[test]
