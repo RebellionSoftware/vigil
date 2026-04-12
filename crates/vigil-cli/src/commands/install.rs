@@ -120,7 +120,52 @@ pub async fn run(args: InstallArgs) -> miette::Result<()> {
     let report = engine.check_tree(&tree, existing_lockfile.as_ref());
 
     let has_blockers = output::print_check_report(&report, &tree);
+
+    // ── 4a. Write block audit entries before aborting ─────────────────────────
+    // Log one "block" entry per unique package that failed a check so the audit
+    // trail records attempted installs, not just successful ones.
     if has_blockers {
+        let username = whoami::username();
+        let audit = AuditLog::new(&project_dir);
+        let now = chrono::Utc::now();
+
+        // Collect unique blocked packages; aggregate all reasons per package.
+        let mut seen_keys: Vec<String> = Vec::new();
+        let mut seen_set: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut reasons: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+        for result in report.blocked() {
+            let key = result.package.to_key();
+            if let vigil_core::policy::CheckOutcome::Blocked { reason } = &result.outcome {
+                reasons.entry(key.clone()).or_default().push(reason.clone());
+            }
+            if seen_set.insert(key.clone()) {
+                seen_keys.push(key);
+            }
+        }
+
+        for key in &seen_keys {
+            if let Some(node) = tree.get(key) {
+                let age_days = now.signed_duration_since(node.published_at).num_days().max(0) as u32;
+                let reason_text = reasons.get(key).map(|rs| rs.join("; "));
+                let block_entry = AuditEntry {
+                    ts: now,
+                    event: "block".to_string(),
+                    package: node.spec.name.to_string(),
+                    version: node.spec.version.to_string(),
+                    age_days,
+                    checks_passed: vec![],
+                    user: username.clone(),
+                    dev: args.dev,
+                    optional: args.optional,
+                    reason: reason_text,
+                    prev_hash: None,
+                };
+                if let Err(e) = audit.append(&block_entry) {
+                    eprintln!("  {} failed to write block event to audit log: {e}", "!".yellow());
+                }
+            }
+        }
+
         return Err(output::print_blocked_and_fail(&report));
     }
 

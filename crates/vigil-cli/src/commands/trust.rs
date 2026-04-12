@@ -90,6 +90,33 @@ pub async fn run(args: TrustArgs) -> miette::Result<()> {
 
             write_vigil_toml(&project_dir, &config)?;
 
+            // Write a trust audit entry for the pre-approval decision. The package
+            // is not yet installed so version and age_days are not yet known —
+            // record "pre-approved" as the version to make this clear in the log.
+            let audit = AuditLog::new(&project_dir);
+            let username = whoami::username();
+            let approved_perms: Vec<&str> = args.allow.iter()
+                .filter(|p| *p == PERMISSION_POSTINSTALL || *p == PERMISSION_INACTIVITY)
+                .map(String::as_str)
+                .collect();
+            let trust_entry = AuditEntry {
+                ts: chrono::Utc::now(),
+                event: "trust".to_string(),
+                package: pkg.to_string(),
+                version: "pre-approved".to_string(),
+                age_days: 0,
+                checks_passed: vec![],
+                user: username,
+                dev: false,
+                optional: false,
+                reason: Some(format!("pre-approved: {}", approved_perms.join(", "))),
+                prev_hash: None,
+            };
+            if let Err(e) = audit.append(&trust_entry) {
+                // Trust decisions must be audited — fail loudly if the log write fails.
+                return Err(miette::miette!("failed to write trust decision to audit log: {e}"));
+            }
+
             if has_postinstall {
                 eprintln!(
                     "  {} Pre-approved postinstall scripts for {}",
