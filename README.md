@@ -330,8 +330,8 @@ Understanding what Vigil guarantees — and what it explicitly does not — is e
 
 ### What Vigil guarantees
 
-- **Policy checks run before Bun.** No package reaches `bun add` unless it has passed all configured checks. The age gate, inactivity check, postinstall block, and hard blocklist are enforced before any network download occurs.
-- **Content hashes are computed post-install.** After Bun writes to `node_modules`, Vigil computes a SHA-512 hash of every installed package directory and records it in `vigil.lock`. `vigil verify` re-hashes from disk and fails on any mismatch — injected files, replaced binaries, or modified scripts all produce a different digest.
+- **Policy checks run before the package manager.** No package reaches `bun add` or `npm install` unless it has passed all configured checks. The age gate, inactivity check, postinstall block, and hard blocklist are enforced before any network download occurs.
+- **Content hashes are computed post-install.** After the package manager writes to `node_modules`, Vigil computes a SHA-512 hash of every installed package directory and records it in `vigil.lock`. `vigil verify` re-hashes from disk and fails on any mismatch — injected files, replaced binaries, or modified scripts all produce a different digest.
 - **The audit log is tamper-evident.** Each entry in `vigil-audit.log` contains a SHA-256 hash of the previous raw log line, forming a hash chain. Deleting, inserting, or modifying any entry breaks the chain, detectable with `vigil audit verify`.
 
 ### What Vigil does NOT guarantee
