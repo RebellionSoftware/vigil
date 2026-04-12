@@ -60,8 +60,14 @@ pub async fn run(args: InstallArgs) -> miette::Result<()> {
     let project_dir = env::current_dir()
         .map_err(|e| miette::miette!("cannot determine current directory: {e}"))?;
 
-    // Validate --allow-fresh names before any I/O — bypass flags are the
-    // highest-trust inputs and must be checked before network calls or disk reads.
+    // Validate all install targets and --allow-fresh names before any I/O.
+    // Resolver errors on invalid names produce confusing network-layer messages;
+    // catching them here gives a clear "invalid package name" error upfront.
+    for spec in &args.packages {
+        let base = pkg_base_name(spec);
+        PackageName::new(base)
+            .map_err(|e| miette::miette!("invalid package name '{base}': {e}"))?;
+    }
     for name in &args.allow_fresh {
         PackageName::new(name)
             .map_err(|e| miette::miette!("invalid package name '{name}': {e}"))?;
