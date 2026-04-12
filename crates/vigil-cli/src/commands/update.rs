@@ -1,7 +1,7 @@
 use clap::Args;
 use std::env;
 use vigil_core::{
-    bun::BunRunner,
+    RunnerFactory,
     config::VigilConfig,
     hash::hash_package_dir,
     lockfile::{diff, generate_from_tree, merge_into, VigilLockfile},
@@ -145,14 +145,14 @@ pub async fn run(args: UpdateArgs) -> miette::Result<()> {
     OverridesManager::write_overrides(&project_dir, &overrides)
         .map_err(|e| miette::miette!("failed to update package.json overrides: {e}"))?;
 
-    // ── Run bun install (re-resolves from updated package.json + overrides) ───
-    let bun = BunRunner::new(&project_dir).await
+    // ── Run package manager install (re-resolves from updated package.json + overrides)
+    let runner = RunnerFactory::create(&project_dir, &config.package_manager).await
         .map_err(|e| miette::miette!("{e}"))?;
 
-    eprintln!("Running bun install…");
-    bun.install(config.policy.block_postinstall)
+    eprintln!("Running {} install…", config.package_manager);
+    runner.install(config.policy.block_postinstall)
         .await
-        .map_err(|e| miette::miette!("bun failed: {e}"))?;
+        .map_err(|e| miette::miette!("{e}"))?;
 
     // ── Re-hash only changed/added packages ───────────────────────────────────
     let node_modules = project_dir.join("node_modules");
@@ -171,7 +171,7 @@ pub async fn run(args: UpdateArgs) -> miette::Result<()> {
         let hash = hash_package_dir(&node_modules, &node.spec.name.to_string())
             .map_err(|e| miette::miette!(
                 "failed to hash {key} after update: {e}\n\
-                 The package may not have been installed correctly by bun."
+                 The package may not have been installed correctly.",
             ))?;
         if let Some(entry) = existing_lockfile.packages.get_mut(&key) {
             entry.content_hash = hash;

@@ -71,13 +71,15 @@ mod tests {
         write_fixture(dir.path(), r#"{"name":"app","version":"1.0.0","scripts":{"test":"jest"},"overrides":{}}"#);
 
         let mut v = read_package_json(dir.path()).unwrap();
-        v["overrides"] = json!({"ms": "2.1.3", "_vigil": "DO NOT EDIT — managed by vigil"});
+        v["//vigil-overrides"] = json!("DO NOT EDIT — managed by vigil");
+        v["overrides"] = json!({"ms": "2.1.3"});
         write_package_json(dir.path(), &v).unwrap();
 
         let v2 = read_package_json(dir.path()).unwrap();
         assert_eq!(v2["name"], json!("app"));
         assert_eq!(v2["scripts"]["test"], json!("jest"));
         assert_eq!(v2["overrides"]["ms"], json!("2.1.3"));
+        assert_eq!(v2["//vigil-overrides"], json!("DO NOT EDIT — managed by vigil"));
     }
 
     #[test]

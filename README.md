@@ -1,10 +1,10 @@
 # Vigil
 
-A security-focused package manager wrapper for Bun that enforces supply chain security policies before any package is installed.
+A security-focused package manager wrapper for Bun and npm that enforces supply chain security policies before any package is installed.
 
 ## Overview
 
-Vigil is a security policy engine and CLI wrapper around [Bun](https://bun.com) that inverts the traditional package manager model from **trust-by-default** to **deny-by-default, audit-to-allow**. It runs pre-flight security checks on every package before installation and verifies content hashes post-install.
+Vigil is a security policy engine and CLI wrapper around [Bun](https://bun.com) and [npm](https://www.npmjs.com) that inverts the traditional package manager model from **trust-by-default** to **deny-by-default, audit-to-allow**. It runs pre-flight security checks on every package before installation and verifies content hashes post-install.
 
 ### The Problem
 
@@ -22,11 +22,11 @@ Modern JavaScript package managers (npm, bun, pnpm) are optimized for speed and 
 
 ### The Solution
 
-Vigil adds a hardened security gate that every package must pass through before Bun is ever invoked:
+Vigil adds a hardened security gate that every package must pass through before the package manager is ever invoked:
 
 1. Resolves exact versions via the npm registry API
 2. Runs pre-flight security checks against every package in the dependency tree
-3. Either blocks with a clear reason, or hands off to Bun with pinned, verified specs
+3. Either blocks with a clear reason, or hands off to Bun/npm with pinned, verified specs
 4. Verifies SHA-512 content hashes of installed packages post-install
 5. Appends tamper-evident entries to an audit log
 
@@ -83,7 +83,7 @@ packages = ["malicious-pkg", "abandoned-utility"]
 
 Vigil writes an `overrides` block into `package.json` to pin every transitive dependency to the exact version resolved by Vigil. `vigil verify` checks that this block matches the lockfile — detecting manual edits or out-of-band installs that bypass pinning.
 
-The overrides block is protected by a `_vigil` sentinel so Vigil can identify and manage it safely without touching any overrides you manage yourself.
+The overrides block is protected by a top-level `//vigil-overrides` sentinel key in `package.json` so Vigil can identify and manage it safely without touching any overrides you manage yourself.
 
 ### Audit Log
 
@@ -124,7 +124,8 @@ User Command
              │ Pass / Block
              ▼
 ┌─────────────────────────────┐
-│  Bun (subprocess)           │
+│  Package Manager            │
+│  (bun | npm — subprocess)   │
 │  bun add axios@1.7.4        │  ← always pinned exact version
 └────────────┬────────────────┘
              │
@@ -138,23 +139,25 @@ User Command
 ```
 
 **Vigil owns:** policy checks, pre-flight, post-install verification, `vigil.lock`, `vigil.toml`, audit log
-**Bun owns:** downloads, `node_modules` layout, `bun.lockb`
+**Package manager owns:** downloads, `node_modules` layout, lockfile (`bun.lockb` / `package-lock.json`)
 
 ## Usage
 
 ### Starting a new project
 
 ```bash
-vigil init
+vigil init          # uses bun (default)
+vigil init --npm    # uses npm instead
 ```
 
-Creates `vigil.toml` with default policy settings and runs `bun init` to scaffold the project.
+Creates `vigil.toml` with default policy settings and runs the package manager's init to scaffold the project.
 
 ### Onboarding an existing project
 
 ```bash
 vigil import
 vigil import --include-dev   # also import devDependencies
+vigil import --npm           # create vigil.toml with npm as the package manager
 ```
 
 Reads `package.json`, resolves the full dependency tree, and writes `vigil.lock`. Policy checks run but **never block** during import — existing projects may have packages that predate your policy. Packages that would be blocked on a fresh install are flagged with a warning. Any prior postinstall approvals for currently-blocked packages are revoked.
@@ -243,6 +246,9 @@ In `--ci` mode, packages whose disk hash was not yet recorded also cause a failu
 `vigil.toml` is created automatically by `vigil init` or `vigil import`. All fields shown below are the defaults.
 
 ```toml
+# Package manager to use: "bun" (default) or "npm"
+package_manager = "bun"
+
 [policy]
 # Minimum age in days before a package version can be installed.
 # Blocks versions published less than N days ago to close the rapid-publish attack window.
@@ -330,12 +336,12 @@ Understanding what Vigil guarantees — and what it explicitly does not — is e
 
 ### What Vigil does NOT guarantee
 
-- **Vigil does not sandbox Bun or inspect downloaded tarballs.** It trusts that npm registry metadata (publish timestamp, version, scripts fields) is accurate. A registry under adversary control could serve false metadata.
-- **Vigil does not authenticate the npm registry.** TLS to the registry is Bun's responsibility. Vigil reads from the npm registry API over HTTPS but performs no certificate pinning.
+- **Vigil does not sandbox the package manager or inspect downloaded tarballs.** It trusts that npm registry metadata (publish timestamp, version, scripts fields) is accurate. A registry under adversary control could serve false metadata.
+- **Vigil does not authenticate the npm registry.** TLS to the registry is the package manager's responsibility. Vigil reads from the npm registry API over HTTPS but performs no certificate pinning.
 - **`vigil.lock` integrity depends on the filesystem.** If an attacker has write access to your project directory, they can also tamper with `vigil.lock`. Vigil's lockfile checksum detects accidental corruption and naive edits, but is not a substitute for filesystem access controls.
 - **The audit log is tamper-evident, not tamper-proof.** A local attacker with write access can replace the entire log (defeating the chain). Commit `vigil-audit.log` to version control to make tampering visible in git history.
 - **Vigil does not protect against a compromised build host.** If the machine running `vigil install` is already compromised, all bets are off.
-- **Running `bun add` directly bypasses all Vigil checks.** Any package installed via Bun outside of `vigil install` skips the age gate, inactivity check, postinstall block, and hard blocklist, and is not recorded in the audit log. Enforce Vigil-only installs through team convention, CI enforcement (`vigil verify --ci` will reject packages not in `vigil.lock`), and optionally shell aliases or wrapper scripts.
+- **Running the package manager directly bypasses all Vigil checks.** Any package installed via `bun add` or `npm install` outside of `vigil install` skips the age gate, inactivity check, postinstall block, and hard blocklist, and is not recorded in the audit log. Enforce Vigil-only installs through team convention, CI enforcement (`vigil verify --ci` will reject packages not in `vigil.lock`), and optionally shell aliases or wrapper scripts.
 - **`vigil import` does not block policy violations — it warns only.** The initial baseline established by `vigil import` may contain packages that would be blocked on a fresh `vigil install`. Review import warnings and use `vigil trust` or `[blocked]` to address them before treating the lockfile as a hardened security baseline.
 - **Policy checks are conditional on your configuration.** Setting `min_age_days = 0` and `block_postinstall = false` disables those checks entirely. Vigil enforces whatever policy you configure — it does not warn when the effective configuration provides minimal protection.
 
@@ -358,7 +364,7 @@ If any of these assumptions do not hold in your threat model, layer additional c
 - run: vigil install             # reinstalls from vigil.lock with full policy enforcement
 ```
 
-> **Do not substitute `bun install` in CI.** Running `bun install` bypasses all Vigil policy checks — no age gate, no postinstall blocking, no audit log entry.
+> **Do not substitute `bun install` or `npm install` in CI.** Running the package manager directly bypasses all Vigil policy checks — no age gate, no postinstall blocking, no audit log entry.
 
 `vigil verify --ci` exits 1 if `vigil.lock` is missing or any hash mismatches. `vigil verify --git` additionally warns (and in `--ci` mode, fails) if `vigil.lock` has uncommitted local changes. Run verification **before** install in CI to catch a tampered lockfile before it can influence the build.
 
@@ -369,7 +375,7 @@ If any of these assumptions do not hold in your threat model, layer additional c
 | `vigil.lock` | **Yes** | Contains resolved versions and content hashes — the source of truth |
 | `vigil.toml` | **Yes** | Policy configuration — changes here are auditable |
 | `vigil-audit.log` | **Yes** | Append-only audit trail — git history anchors the hash chain |
-| `bun.lockb` | Yes | Bun's own lockfile — keep in sync |
+| `bun.lockb` / `package-lock.json` | Yes | Package manager's own lockfile — keep in sync |
 
 ## What is not yet implemented
 
@@ -382,11 +388,11 @@ Other planned features not yet started:
 
 - `vigil diff` — AST-based security diff for package updates
 - CI mode strict lockfile enforcement beyond `--ci` hash checking
-- Multi-ecosystem support (npm, uv, pip)
+- Additional package manager support
 
 ## Requirements
 
-- [Bun](https://bun.com) installed and in `PATH`
+- [Bun](https://bun.com) or [npm](https://www.npmjs.com) installed and in `PATH` (whichever is configured in `vigil.toml`)
 - Rust toolchain (to build from source)
 
 ## License

@@ -7,8 +7,17 @@ use crate::{
     package_json,
 };
 
-/// Sentinel value written into `overrides._vigil` to mark the block as vigil-managed.
-pub const VIGIL_SENTINEL_KEY: &str = "_vigil";
+/// Top-level `package.json` key used to mark the `overrides` block as vigil-managed.
+///
+/// Stored **outside** the `overrides` object because npm validates every key
+/// inside `overrides` as a real package specifier — non-package keys like `_vigil`
+/// or `//vigil` cause `npm install` to fail. Top-level unknown keys are ignored
+/// by both npm and bun.
+pub const VIGIL_SENTINEL_KEY: &str = "//vigil-overrides";
+/// Legacy sentinel keys that older vigil versions stored *inside* the `overrides`
+/// block. Accepted on read so existing projects aren't flagged as unmanaged after
+/// upgrading, but never written.
+pub const VIGIL_LEGACY_SENTINEL_KEYS: &[&str] = &["_vigil", "//vigil"];
 pub const VIGIL_SENTINEL_VALUE: &str = "DO NOT EDIT — managed by vigil";
 
 /// A single entry in a drift report.
@@ -26,7 +35,7 @@ pub enum DriftIssue {
     ExtraInOverrides { actual_version: String },
     /// Package is in both but the pinned version differs.
     VersionMismatch { expected: String, actual: String },
-    /// The `_vigil` sentinel is absent — the block was not created by vigil.
+    /// The `//vigil` sentinel is absent — the block was not created by vigil.
     SentinelMissing,
 }
 
@@ -53,35 +62,58 @@ impl OverridesManager {
         Ok(Some(map))
     }
 
+    /// Check whether a `package.json` value has the vigil sentinel.
+    ///
+    /// Checks the current top-level key first, then falls back to legacy keys
+    /// that older versions stored inside the `overrides` block.
+    fn has_sentinel(v: &serde_json::Value) -> bool {
+        // Current: top-level "//vigil-overrides" key
+        if v.get(VIGIL_SENTINEL_KEY).is_some() {
+            return true;
+        }
+        // Legacy: "_vigil" or "//vigil" inside the overrides object
+        if let Some(obj) = v.get("overrides").and_then(|o| o.as_object()) {
+            for key in VIGIL_LEGACY_SENTINEL_KEYS {
+                if obj.contains_key(*key) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Write a vigil-managed `overrides` block into `package.json`.
     ///
     /// - Preserves all other fields in `package.json`.
-    /// - Injects the `_vigil` sentinel.
+    /// - Sets the top-level `//vigil-overrides` sentinel.
+    /// - Removes any legacy sentinel keys from inside the `overrides` block.
     /// - Creates a backup before writing (see `package_json::write_package_json`).
     /// - Errors if an `overrides` block exists but was **not** created by vigil
-    ///   (i.e. sentinel is absent), to avoid silently overwriting user-managed overrides.
+    ///   (i.e. no sentinel found), to avoid silently overwriting user-managed overrides.
     pub fn write_overrides(
         project_dir: &Path,
         overrides: &BTreeMap<String, String>,
     ) -> Result<()> {
         let mut v = package_json::read_package_json(project_dir)?;
 
-        // Guard: if a non-empty overrides block exists without the sentinel, refuse to
+        // Guard: if a non-empty overrides block exists without any sentinel, refuse to
         // overwrite — it was created by the user or another tool, not by vigil.
         if let Some(obj) = v.get("overrides").and_then(|v| v.as_object()) {
-            if !obj.is_empty() && !obj.contains_key(VIGIL_SENTINEL_KEY) {
+            if !obj.is_empty() && !Self::has_sentinel(&v) {
                 return Err(Error::PackageJsonWrite(
                     "package.json already has an overrides block not managed by vigil \
-                     (missing _vigil sentinel). Remove it manually or add the sentinel \
+                     (missing vigil sentinel). Remove it manually or add the sentinel \
                      to let vigil manage it."
                         .to_string(),
                 ));
             }
         }
 
-        // Build the new overrides object with sentinel first.
+        // Set the top-level sentinel.
+        v[VIGIL_SENTINEL_KEY] = json!(VIGIL_SENTINEL_VALUE);
+
+        // Build the new overrides object — only real package pins, no sentinel keys.
         let mut obj = serde_json::Map::new();
-        obj.insert(VIGIL_SENTINEL_KEY.to_string(), json!(VIGIL_SENTINEL_VALUE));
         for (name, version) in overrides {
             obj.insert(name.clone(), json!(version));
         }
@@ -118,7 +150,10 @@ impl OverridesManager {
 
         let expected = Self::generate_overrides(lockfile);
 
-        let actual = match Self::read_overrides(project_dir)? {
+        // Read the full package.json once so we can check the sentinel.
+        let pkg_json = package_json::read_package_json(project_dir)?;
+
+        let actual = match pkg_json.get("overrides") {
             None => {
                 // No overrides block at all — sentinel is missing and every entry is missing.
                 entries.push(DriftEntry {
@@ -135,11 +170,22 @@ impl OverridesManager {
                 }
                 return Ok(entries);
             }
-            Some(m) => m,
+            Some(overrides_val) => {
+                let Some(obj) = overrides_val.as_object() else {
+                    return Err(Error::PackageJsonWrite(
+                        "overrides field is not a JSON object".to_string(),
+                    ));
+                };
+                let map: BTreeMap<String, String> = obj
+                    .iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .collect();
+                map
+            }
         };
 
-        // Check for sentinel
-        if !actual.contains_key(VIGIL_SENTINEL_KEY) {
+        // Check for sentinel (top-level or legacy inside overrides)
+        if !Self::has_sentinel(&pkg_json) {
             entries.push(DriftEntry {
                 package: VIGIL_SENTINEL_KEY.to_string(),
                 issue: DriftIssue::SentinelMissing,
@@ -169,9 +215,9 @@ impl OverridesManager {
             }
         }
 
-        // Check for extra entries (ignoring the sentinel key)
+        // Check for extra entries (ignoring legacy sentinel keys that may still be inside)
         for pkg in actual.keys() {
-            if pkg == VIGIL_SENTINEL_KEY {
+            if VIGIL_LEGACY_SENTINEL_KEYS.contains(&pkg.as_str()) {
                 continue;
             }
             if !expected.contains_key(pkg) {
@@ -257,7 +303,12 @@ mod tests {
         let read_back = OverridesManager::read_overrides(dir.path()).unwrap().unwrap();
         assert_eq!(read_back["ms"], "2.1.3");
         assert_eq!(read_back["debug"], "4.4.3");
-        assert_eq!(read_back[VIGIL_SENTINEL_KEY], VIGIL_SENTINEL_VALUE);
+        // Sentinel should NOT be inside overrides — it's top-level
+        assert!(!read_back.contains_key(VIGIL_SENTINEL_KEY));
+
+        // Verify sentinel is at top level
+        let v = crate::package_json::read_package_json(dir.path()).unwrap();
+        assert_eq!(v[VIGIL_SENTINEL_KEY], serde_json::json!(VIGIL_SENTINEL_VALUE));
     }
 
     #[test]
@@ -276,7 +327,7 @@ mod tests {
     #[test]
     fn write_overrides_errors_on_non_vigil_overrides() {
         let dir = tempfile::tempdir().unwrap();
-        // Existing overrides block with no _vigil sentinel
+        // Existing overrides block with no sentinel
         write_package_json(dir.path(), r#"{"name":"app","overrides":{"lodash":"4.17.21"}}"#);
 
         let overrides: BTreeMap<String, String> = [("ms".into(), "2.1.3".into())].into();
@@ -307,11 +358,14 @@ mod tests {
 
     fn write_vigil_overrides(dir: &Path, entries: &[(&str, &str)]) {
         let mut obj = serde_json::Map::new();
-        obj.insert(VIGIL_SENTINEL_KEY.into(), serde_json::json!(VIGIL_SENTINEL_VALUE));
         for (k, v) in entries {
             obj.insert((*k).into(), serde_json::json!(*v));
         }
-        let content = serde_json::json!({"name":"app","overrides": obj});
+        let content = serde_json::json!({
+            "name": "app",
+            VIGIL_SENTINEL_KEY: VIGIL_SENTINEL_VALUE,
+            "overrides": obj,
+        });
         std::fs::write(dir.join("package.json"), serde_json::to_string(&content).unwrap()).unwrap();
     }
 
@@ -416,5 +470,55 @@ mod tests {
 
         let read_back = OverridesManager::read_overrides(dir.path()).unwrap().unwrap();
         assert_eq!(read_back["ms"], "2.1.4", "second write should update the version");
+    }
+
+    #[test]
+    fn write_overrides_accepts_legacy_sentinel() {
+        let dir = tempfile::tempdir().unwrap();
+        // Existing overrides block with old _vigil sentinel inside overrides (legacy)
+        write_package_json(dir.path(),
+            r#"{"name":"app","overrides":{"_vigil":"DO NOT EDIT — managed by vigil","ms":"2.1.3"}}"#);
+
+        let overrides: BTreeMap<String, String> = [("ms".into(), "2.1.4".into())].into();
+        // Should succeed — legacy sentinel is recognized
+        OverridesManager::write_overrides(dir.path(), &overrides).unwrap();
+
+        // New sentinel should be at top level, legacy removed from inside overrides
+        let v = crate::package_json::read_package_json(dir.path()).unwrap();
+        assert_eq!(v[VIGIL_SENTINEL_KEY], serde_json::json!(VIGIL_SENTINEL_VALUE));
+        let ovr = v["overrides"].as_object().unwrap();
+        assert!(!ovr.contains_key("_vigil"), "legacy sentinel should be removed from overrides");
+        assert_eq!(ovr["ms"], serde_json::json!("2.1.4"));
+    }
+
+    #[test]
+    fn detect_drift_accepts_legacy_sentinel() {
+        let dir = tempfile::tempdir().unwrap();
+        let lf = lockfile_with_packages();
+        // Write overrides with legacy _vigil sentinel inside overrides block
+        let content = serde_json::json!({
+            "name": "app",
+            "overrides": {
+                "_vigil": "DO NOT EDIT — managed by vigil",
+                "ms": "2.1.3",
+                "debug": "4.4.3"
+            }
+        });
+        std::fs::write(
+            dir.path().join("package.json"),
+            serde_json::to_string(&content).unwrap(),
+        ).unwrap();
+
+        let drift = OverridesManager::detect_drift(dir.path(), &lf).unwrap();
+        // Legacy sentinel should be accepted — no SentinelMissing
+        assert!(
+            !drift.iter().any(|e| matches!(e.issue, DriftIssue::SentinelMissing)),
+            "legacy sentinel should be accepted: {:?}", drift
+        );
+        // _vigil inside overrides should not be flagged as extra
+        assert!(
+            !drift.iter().any(|e| e.package == "_vigil"),
+            "legacy sentinel should not be flagged as extra: {:?}", drift
+        );
     }
 }

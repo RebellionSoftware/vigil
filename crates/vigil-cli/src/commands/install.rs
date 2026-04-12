@@ -1,7 +1,7 @@
 use clap::Args;
 use std::env;
 use vigil_core::{
-    bun::BunRunner,
+    RunnerFactory,
     config::VigilConfig,
     hash::hash_package_dir,
     lockfile::{generate_from_tree, merge_into, VigilLockfile},
@@ -203,8 +203,8 @@ pub async fn run(args: InstallArgs) -> miette::Result<()> {
     OverridesManager::write_overrides(&project_dir, &overrides)
         .map_err(|e| miette::miette!("failed to update package.json overrides: {e}"))?;
 
-    // ── 8. Run bun add ────────────────────────────────────────────────────────
-    let bun = BunRunner::new(&project_dir).await
+    // ── 8. Run package manager add ────────────────────────────────────────────
+    let runner = RunnerFactory::create(&project_dir, &config.package_manager).await
         .map_err(|e| miette::miette!("{e}"))?;
 
     let direct_specs: Vec<_> = tree
@@ -245,7 +245,7 @@ pub async fn run(args: InstallArgs) -> miette::Result<()> {
         .partition(|spec| new_base_names.contains(spec.name.as_str()));
 
     let dep_kind = if args.dev { " (dev)" } else if args.optional { " (optional)" } else { "" };
-    eprintln!("Running bun add{dep_kind}…");
+    eprintln!("Running {} add{dep_kind}…", config.package_manager);
 
     // Install newly-requested packages with their correct designation.
     if !new_specs.is_empty() {
@@ -271,9 +271,9 @@ pub async fn run(args: InstallArgs) -> miette::Result<()> {
             }
         }
 
-        bun.add(&new_specs, args.dev, args.optional, ignore_scripts)
+        runner.add(&new_specs, args.dev, args.optional, ignore_scripts)
             .await
-            .map_err(|e| miette::miette!("bun failed: {e}"))?;
+            .map_err(|e| miette::miette!("{e}"))?;
     }
 
     // Re-install existing direct packages grouped by their recorded designation
@@ -310,9 +310,9 @@ pub async fn run(args: InstallArgs) -> miette::Result<()> {
             groups.entry((dev, optional)).or_default().push(spec);
         }
         for ((dev, optional), specs) in groups {
-            bun.add(&specs, dev, optional, ignore_scripts)
+            runner.add(&specs, dev, optional, ignore_scripts)
                 .await
-                .map_err(|e| miette::miette!("bun failed: {e}"))?;
+                .map_err(|e| miette::miette!("{e}"))?;
         }
     }
 
@@ -324,7 +324,7 @@ pub async fn run(args: InstallArgs) -> miette::Result<()> {
         let hash = hash_package_dir(&node_modules, &pkg_name)
             .map_err(|e| miette::miette!(
                 "failed to hash {} after install: {e}\n\
-                 The package may not have been installed correctly by bun.",
+                 The package may not have been installed correctly.",
                 node.spec.to_key()
             ))?;
         let key = node.spec.to_key();

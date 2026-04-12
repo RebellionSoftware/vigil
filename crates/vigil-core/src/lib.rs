@@ -1,5 +1,6 @@
 pub mod bun;
 pub mod config;
+pub mod npm;
 pub mod error;
 pub mod hash;
 pub mod lockfile;

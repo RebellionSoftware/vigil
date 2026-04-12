@@ -103,7 +103,7 @@ pub async fn run(args: VerifyArgs) -> miette::Result<()> {
                         format!("overrides drift: '{}' pinned to {} but lockfile says {}", d.package, actual, expected)
                     }
                     DriftIssue::SentinelMissing => {
-                        "overrides block is missing the _vigil sentinel — may not be managed by vigil".to_string()
+                        "overrides block is missing the vigil sentinel — may not be managed by vigil".to_string()
                     }
                 };
                 failures.push(msg);

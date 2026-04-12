@@ -49,11 +49,8 @@ impl VigilConfig {
         let digest = Sha256::digest(contents.as_bytes());
         let hash = format!("{digest:x}");
         let config: VigilConfig = toml::from_str(&contents)?;
-        // Validate package_manager first — it is a top-level structural field
-        // whose value gates which runner is created. "npm" is accepted here even
-        // though NpmRunner does not exist yet; RunnerFactory::create will return
-        // Error::Config for "npm" until Task 4 adds the implementation.
-        // TODO(Task 4): remove this note once NpmRunner is wired into RunnerFactory.
+        // Validate package_manager — it is a top-level structural field whose
+        // value gates which runner RunnerFactory::create will return.
         match config.package_manager.as_str() {
             "bun" | "npm" => {}
             other => {

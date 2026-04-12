@@ -4,6 +4,7 @@ use std::path::Path;
 use crate::{
     bun::BunRunner,
     error::{Error, Result},
+    npm::NpmRunner,
     types::PackageSpec,
 };
 
@@ -56,10 +57,7 @@ impl RunnerFactory {
     ) -> Result<Box<dyn PackageRunner>> {
         match package_manager {
             "bun" => Ok(Box::new(BunRunner::new(project_dir).await?)),
-            // TODO(Task 4): add "npm" arm once NpmRunner is implemented.
-            // config.rs accepts "npm" as a valid config value, but the runner arm
-            // does not exist yet — a user who sets package_manager = "npm" will
-            // hit this error until Task 4 lands.
+            "npm" => Ok(Box::new(NpmRunner::new(project_dir).await?)),
             other => Err(Error::Config(format!(
                 "unknown package_manager '{other}' — supported values: bun, npm"
             ))),
@@ -81,15 +79,16 @@ mod tests {
         );
     }
 
-    /// "npm" is accepted by config validation but has no runner yet (until Task 4).
-    /// Pin this behaviour so the test fails visibly when Task 4 wires it up.
+    /// "npm" is a valid package manager — the factory should attempt to create
+    /// an NpmRunner. On CI / dev machines without npm this returns
+    /// `PackageManagerNotFound`; with npm installed it returns `Ok`.
     #[tokio::test]
-    async fn create_npm_returns_config_error_until_task4() {
+    async fn create_npm_returns_runner_or_not_found() {
         let dir = tempfile::tempdir().unwrap();
         let result = RunnerFactory::create(dir.path(), "npm").await;
         assert!(
-            matches!(result, Err(Error::Config(_))),
-            "npm should return Error::Config until NpmRunner is implemented, got: {result:?}",
+            matches!(result, Ok(_) | Err(Error::PackageManagerNotFound(_))),
+            "npm should return Ok or PackageManagerNotFound, got: {result:?}",
         );
     }
 

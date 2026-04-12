@@ -1,58 +1,51 @@
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
+
 use crate::{
     error::{Error, Result},
     runner::PackageRunner,
     types::PackageSpec,
 };
 
-/// Wraps the Bun subprocess for package installation operations.
+/// Wraps the npm subprocess for package installation operations.
 #[derive(Debug)]
-pub struct BunRunner {
-    /// Resolved path to the `bun` binary.
-    bun_path: PathBuf,
+pub struct NpmRunner {
+    /// Resolved path to the `npm` binary.
+    npm_path: PathBuf,
     /// The project root (directory containing `package.json`).
     project_dir: PathBuf,
 }
 
-impl BunRunner {
-    /// Find `bun` in `$PATH` and verify it is executable.
+impl NpmRunner {
+    /// Find `npm` in `$PATH` and verify it is executable.
     ///
-    /// Returns `Err(Error::PackageManagerNotFound)` if `bun` is not found in `$PATH`.
+    /// Returns `Err(Error::PackageManagerNotFound)` if `npm` is not found in `$PATH`.
     ///
     /// Uses `spawn_blocking` so the probe does not block a Tokio worker thread.
     pub async fn new(project_dir: &Path) -> Result<Self> {
         let status = tokio::task::spawn_blocking(|| {
-            std::process::Command::new("bun")
+            std::process::Command::new("npm")
                 .arg("--version")
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .status()
         })
         .await
-        .map_err(|_| Error::PackageManagerNotFound("bun".to_string()))? // JoinError — task panicked
-        .map_err(|_| Error::PackageManagerNotFound("bun".to_string()))?; // io::Error — bun not in PATH
+        .map_err(|_| Error::PackageManagerNotFound("npm".to_string()))? // JoinError — task panicked
+        .map_err(|_| Error::PackageManagerNotFound("npm".to_string()))?; // io::Error — npm not in PATH
 
         if !status.success() {
-            return Err(Error::PackageManagerNotFound("bun".to_string()));
+            return Err(Error::PackageManagerNotFound("npm".to_string()));
         }
 
-        Ok(BunRunner {
-            bun_path: PathBuf::from("bun"),
+        Ok(NpmRunner {
+            npm_path: PathBuf::from("npm"),
             project_dir: project_dir.to_path_buf(),
         })
     }
 
-    /// Run `bun add --exact [--dev|--optional] [--ignore-scripts] <name>@<version>…`.
-    ///
-    /// `dev` places packages in `devDependencies`; `optional` in `optionalDependencies`.
-    /// These are mutually exclusive — callers must not set both. The flag applies to
-    /// every package in the slice, so callers are responsible for grouping packages
-    /// by type before calling this method.
-    ///
-    /// `ignore_scripts` should be `true` when `block_postinstall` is enabled
-    /// so that Bun does not execute lifecycle scripts during installation.
+    /// Run `npm install --save-exact [--save-dev|--save-optional] [--ignore-scripts] <name>@<version>…`.
     pub async fn add(
         &self,
         packages: &[PackageSpec],
@@ -64,13 +57,13 @@ impl BunRunner {
             !(dev && optional),
             "dev and optional are mutually exclusive; caller must not set both"
         );
-        let mut cmd = Command::new(&self.bun_path);
+        let mut cmd = Command::new(&self.npm_path);
         cmd.current_dir(&self.project_dir);
-        cmd.arg("add").arg("--exact");
+        cmd.arg("install").arg("--save-exact");
         if dev {
-            cmd.arg("--dev");
+            cmd.arg("--save-dev");
         } else if optional {
-            cmd.arg("--optional");
+            cmd.arg("--save-optional");
         }
         if ignore_scripts {
             cmd.arg("--ignore-scripts");
@@ -81,45 +74,42 @@ impl BunRunner {
         self.run(cmd).await
     }
 
-    /// Run `bun remove <name>…`.
+    /// Run `npm uninstall <name>…`.
     pub async fn remove(&self, package_names: &[&str]) -> Result<()> {
-        let mut cmd = Command::new(&self.bun_path);
+        let mut cmd = Command::new(&self.npm_path);
         cmd.current_dir(&self.project_dir)
-            .arg("remove")
+            .arg("uninstall")
             .args(package_names);
         self.run(cmd).await
     }
 
-    /// Run `bun init` interactively.
+    /// Run `npm init` interactively.
     ///
-    /// Unlike other methods, this inherits stdin/stdout/stderr so the user
-    /// can respond to bun's prompts directly in the terminal.
+    /// Inherits stdin/stdout/stderr so the user can respond to prompts directly.
     pub async fn init(&self) -> Result<()> {
-        let status = tokio::process::Command::new(&self.bun_path)
+        let status = tokio::process::Command::new(&self.npm_path)
             .current_dir(&self.project_dir)
             .arg("init")
             .status()
             .await
             .map_err(|e| match e.kind() {
-                std::io::ErrorKind::NotFound => Error::PackageManagerNotFound("bun".to_string()),
+                std::io::ErrorKind::NotFound => Error::PackageManagerNotFound("npm".to_string()),
                 _ => Error::Io(e),
             })?;
 
         if !status.success() {
             return Err(Error::PackageManagerFailed {
-                manager: "bun".to_string(),
+                manager: "npm".to_string(),
                 status: status.code().unwrap_or(-1),
-                // `bun init` inherits the terminal (stdin/stdout/stderr are not piped),
-                // so there is no captured output to report.
                 output: String::new(),
             });
         }
         Ok(())
     }
 
-    /// Run a bare `bun install` (installs from existing `package.json` + lockfile).
+    /// Run a bare `npm install` (installs from existing `package.json` + lockfile).
     pub async fn install(&self, ignore_scripts: bool) -> Result<()> {
-        let mut cmd = Command::new(&self.bun_path);
+        let mut cmd = Command::new(&self.npm_path);
         cmd.current_dir(&self.project_dir).arg("install");
         if ignore_scripts {
             cmd.arg("--ignore-scripts");
@@ -136,7 +126,7 @@ impl BunRunner {
             .output()
             .await
             .map_err(|e| match e.kind() {
-                std::io::ErrorKind::NotFound => Error::PackageManagerNotFound("bun".to_string()),
+                std::io::ErrorKind::NotFound => Error::PackageManagerNotFound("npm".to_string()),
                 _ => Error::Io(e),
             })?;
 
@@ -150,16 +140,20 @@ impl BunRunner {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr),
         );
-        Err(Error::PackageManagerFailed { manager: "bun".to_string(), status: code, output: combined })
+        Err(Error::PackageManagerFailed {
+            manager: "npm".to_string(),
+            status: code,
+            output: combined,
+        })
     }
 }
 
 // ── PackageRunner impl ────────────────────────────────────────────────────────
 
 #[async_trait]
-impl PackageRunner for BunRunner {
+impl PackageRunner for NpmRunner {
     fn package_manager(&self) -> &str {
-        "bun"
+        "npm"
     }
 
     async fn add(
@@ -169,20 +163,19 @@ impl PackageRunner for BunRunner {
         optional: bool,
         ignore_scripts: bool,
     ) -> Result<()> {
-        // UFCS avoids ambiguity between the inherent method and this trait method.
-        BunRunner::add(self, packages, dev, optional, ignore_scripts).await
+        NpmRunner::add(self, packages, dev, optional, ignore_scripts).await
     }
 
     async fn remove(&self, package_names: &[&str]) -> Result<()> {
-        BunRunner::remove(self, package_names).await
+        NpmRunner::remove(self, package_names).await
     }
 
     async fn install(&self, ignore_scripts: bool) -> Result<()> {
-        BunRunner::install(self, ignore_scripts).await
+        NpmRunner::install(self, ignore_scripts).await
     }
 
     async fn init(&self) -> Result<()> {
-        BunRunner::init(self).await
+        NpmRunner::init(self).await
     }
 }
 
@@ -191,17 +184,17 @@ mod tests {
     use super::*;
 
     /// Verify that `run` returns `PackageManagerNotFound` when the binary
-    /// does not exist. We test this by constructing a runner manually with a
-    /// bogus path and calling `run` directly.
+    /// does not exist.
     #[tokio::test]
-    async fn run_nonexistent_binary_returns_bun_not_found() {
-        let runner = BunRunner {
-            bun_path: PathBuf::from("definitely-not-a-real-binary-12345"),
+    async fn run_nonexistent_binary_returns_npm_not_found() {
+        let runner = NpmRunner {
+            npm_path: PathBuf::from("definitely-not-a-real-binary-12345"),
             project_dir: std::env::temp_dir(),
         };
-        let mut cmd = Command::new(&runner.bun_path);
+        let mut cmd = Command::new(&runner.npm_path);
         cmd.arg("--version");
         let result = runner.run(cmd).await;
-        assert!(matches!(result, Err(Error::PackageManagerNotFound(_))));
+        assert!(matches!(result, Err(Error::PackageManagerNotFound(ref s)) if s == "npm"),
+            "expected PackageManagerNotFound(\"npm\"), got: {result:?}");
     }
 }

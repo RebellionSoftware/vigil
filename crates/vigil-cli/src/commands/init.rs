@@ -1,6 +1,6 @@
 use clap::Args;
 use std::env;
-use vigil_core::bun::BunRunner;
+use vigil_core::RunnerFactory;
 use owo_colors::OwoColorize;
 
 /// The default `vigil.toml` written by `vigil init` and `vigil import`.
@@ -55,6 +55,10 @@ pub struct InitArgs {
     /// Overwrite an existing vigil.toml if one already exists.
     #[arg(long)]
     pub force: bool,
+
+    /// Use npm instead of bun as the package manager.
+    #[arg(long)]
+    pub npm: bool,
 }
 
 pub async fn run(args: InitArgs) -> miette::Result<()> {
@@ -71,21 +75,28 @@ pub async fn run(args: InitArgs) -> miette::Result<()> {
     }
 
     // ── Write vigil.toml ──────────────────────────────────────────────────────
+    let package_manager = if args.npm { "npm" } else { "bun" };
+    let template = if args.npm {
+        format!("package_manager = \"npm\"\n\n{VIGIL_TOML_TEMPLATE}")
+    } else {
+        VIGIL_TOML_TEMPLATE.to_string()
+    };
+
     let tmp = project_dir.join("vigil.toml.tmp");
-    std::fs::write(&tmp, VIGIL_TOML_TEMPLATE)
+    std::fs::write(&tmp, &template)
         .map_err(|e| miette::miette!("failed to write vigil.toml: {e}"))?;
     std::fs::rename(&tmp, &vigil_toml)
         .map_err(|e| miette::miette!("failed to create vigil.toml: {e}"))?;
 
     eprintln!("  {} Created vigil.toml", "✓".green().bold());
 
-    // ── Run bun init ──────────────────────────────────────────────────────────
-    eprintln!("  {} Running bun init…\n", "→".dimmed());
+    // ── Run package manager init ──────────────────────────────────────────────────
+    eprintln!("  {} Running {} init…\n", "→".dimmed(), package_manager);
 
-    let bun = BunRunner::new(&project_dir).await
+    let runner = RunnerFactory::create(&project_dir, package_manager).await
         .map_err(|e| miette::miette!("{e}"))?;
 
-    bun.init().await
+    runner.init().await
         .map_err(|e| miette::miette!("{e}"))?;
 
     eprintln!("\n  {} Project initialised. Next steps:", "✓".green().bold());

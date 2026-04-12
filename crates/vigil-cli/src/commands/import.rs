@@ -24,6 +24,10 @@ pub struct ImportArgs {
     /// Also import devDependencies from package.json.
     #[arg(long)]
     pub include_dev: bool,
+
+    /// Use npm instead of bun as the package manager.
+    #[arg(long)]
+    pub npm: bool,
 }
 
 pub async fn run(args: ImportArgs) -> miette::Result<()> {
@@ -144,8 +148,13 @@ pub async fn run(args: ImportArgs) -> miette::Result<()> {
 
     let vigil_toml_created = if !project_dir.join("vigil.toml").exists() {
         // vigil.toml doesn't exist yet — write from template before continuing.
+        let template = if args.npm {
+            format!("package_manager = \"npm\"\n\n{VIGIL_TOML_TEMPLATE}")
+        } else {
+            VIGIL_TOML_TEMPLATE.to_string()
+        };
         let tmp = project_dir.join("vigil.toml.tmp");
-        std::fs::write(&tmp, VIGIL_TOML_TEMPLATE)
+        std::fs::write(&tmp, &template)
             .map_err(|e| miette::miette!("failed to write vigil.toml: {e}"))?;
         std::fs::rename(&tmp, project_dir.join("vigil.toml"))
             .map_err(|e| miette::miette!("failed to create vigil.toml: {e}"))?;
@@ -153,6 +162,14 @@ pub async fn run(args: ImportArgs) -> miette::Result<()> {
     } else {
         false
     };
+
+    if args.npm && !vigil_toml_created {
+        eprintln!(
+            "  {} --npm ignored: vigil.toml already exists (package_manager = \"{}\")",
+            "!".yellow(),
+            config.package_manager,
+        );
+    }
 
     // ── 5. Resolve full dependency tree ───────────────────────────────────────
     let registry = NpmRegistryClient::new();

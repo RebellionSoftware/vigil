@@ -2,7 +2,7 @@ use clap::Args;
 use std::collections::HashSet;
 use std::env;
 use vigil_core::{
-    bun::BunRunner,
+    RunnerFactory,
     config::VigilConfig,
     lockfile::VigilLockfile,
     overrides::OverridesManager,
@@ -31,7 +31,7 @@ pub async fn run(args: RemoveArgs) -> miette::Result<()> {
         .collect::<miette::Result<_>>()?;
 
     // Load config to fail loudly on a malformed vigil.toml before touching the lockfile.
-    let _config = VigilConfig::load(&project_dir)
+    let config = VigilConfig::load(&project_dir)
         .map_err(|e| miette::miette!("failed to load vigil.toml: {e}"))?;
 
     let mut lockfile = VigilLockfile::read(&project_dir)
@@ -126,19 +126,22 @@ pub async fn run(args: RemoveArgs) -> miette::Result<()> {
         }
     }
 
+    // ── Run package manager remove ────────────────────────────────────────────────
+    // Run the package manager BEFORE writing overrides or lockfile so that if the
+    // runner fails (binary missing, network error, non-zero exit), no durable state
+    // has changed and the command is a clean retry.
+    let runner = RunnerFactory::create(&project_dir, &config.package_manager).await
+        .map_err(|e| miette::miette!("{e}"))?;
+
+    let pkg_refs: Vec<&str> = validated.iter().map(|n| n.as_str()).collect();
+    runner.remove(&pkg_refs)
+        .await
+        .map_err(|e| miette::miette!("{e}"))?;
+
     // ── Write overrides (removes entries for removed/orphaned packages) ────────
     let overrides = OverridesManager::generate_overrides(&lockfile);
     OverridesManager::write_overrides(&project_dir, &overrides)
         .map_err(|e| miette::miette!("failed to update package.json overrides: {e}"))?;
-
-    // ── Run bun remove ────────────────────────────────────────────────────────
-    let bun = BunRunner::new(&project_dir).await
-        .map_err(|e| miette::miette!("{e}"))?;
-
-    let pkg_refs: Vec<&str> = validated.iter().map(|n| n.as_str()).collect();
-    bun.remove(&pkg_refs)
-        .await
-        .map_err(|e| miette::miette!("bun failed: {e}"))?;
 
     // ── Write lockfile ────────────────────────────────────────────────────────
     lockfile
