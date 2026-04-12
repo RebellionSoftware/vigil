@@ -1,11 +1,14 @@
+use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::Path;
-use crate::error::{Error, Result};
 
 /// Top-level configuration loaded from `vigil.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VigilConfig {
+    #[serde(default = "default_package_manager")]
+    pub package_manager: String,
+
     #[serde(default)]
     pub policy: PolicyConfig,
 
@@ -19,6 +22,7 @@ pub struct VigilConfig {
 impl Default for VigilConfig {
     fn default() -> Self {
         VigilConfig {
+            package_manager: default_package_manager(),
             policy: PolicyConfig::default(),
             bypass: BypassConfig::default(),
             blocked: BlockedConfig::default(),
@@ -46,6 +50,14 @@ impl VigilConfig {
         let hash = format!("{digest:x}");
         let config: VigilConfig = toml::from_str(&contents)?;
         config.policy.validate()?;
+        match config.package_manager.as_str() {
+            "bun" | "npm" => {}
+            other => {
+                return Err(Error::Config(format!(
+                    "unknown package_manager '{other}' — supported values: bun, npm"
+                )))
+            }
+        }
         Ok((config, Some(hash)))
     }
 }
@@ -146,6 +158,10 @@ impl Default for PolicyConfig {
             inactivity_days: default_inactivity_days(),
         }
     }
+}
+
+fn default_package_manager() -> String {
+    "bun".to_string()
 }
 
 fn default_min_age_days() -> u32 {
@@ -353,6 +369,41 @@ packages = ["colors", "faker"]
         assert!(
             err.to_string().contains("min_age_days"),
             "error should mention the invalid field: {err}"
+        );
+    }
+
+    // ── package_manager tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn package_manager_default_is_bun() {
+        let config = VigilConfig::default();
+        assert_eq!(config.package_manager, "bun");
+    }
+
+    #[test]
+    fn package_manager_npm_parses_correctly() {
+        let toml = r#"package_manager = "npm""#;
+        let config: VigilConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.package_manager, "npm");
+        assert!(VigilConfig::load_with_hash(&std::env::temp_dir()).is_ok());
+    }
+
+    #[test]
+    fn package_manager_yarn_fails_at_load_time() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("vigil.toml"),
+            "package_manager = \"yarn\"\n",
+        )
+        .unwrap();
+        let err = VigilConfig::load(dir.path()).unwrap_err();
+        assert!(
+            err.to_string().contains("package_manager"),
+            "error should mention package_manager: {err}"
+        );
+        assert!(
+            err.to_string().contains("yarn"),
+            "error should mention the invalid value: {err}"
         );
     }
 }

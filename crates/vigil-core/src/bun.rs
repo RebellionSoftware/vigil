@@ -1,11 +1,14 @@
+use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 use crate::{
     error::{Error, Result},
+    runner::PackageRunner,
     types::PackageSpec,
 };
 
 /// Wraps the Bun subprocess for package installation operations.
+#[derive(Debug)]
 pub struct BunRunner {
     /// Resolved path to the `bun` binary.
     bun_path: PathBuf,
@@ -142,6 +145,38 @@ impl BunRunner {
             String::from_utf8_lossy(&output.stderr),
         );
         Err(Error::PackageManagerFailed { manager: "bun".to_string(), status: code, output: combined })
+    }
+}
+
+// ── PackageRunner impl ────────────────────────────────────────────────────────
+
+#[async_trait]
+impl PackageRunner for BunRunner {
+    fn package_manager(&self) -> &str {
+        "bun"
+    }
+
+    async fn add(
+        &self,
+        packages: &[PackageSpec],
+        dev: bool,
+        optional: bool,
+        ignore_scripts: bool,
+    ) -> Result<()> {
+        // UFCS avoids ambiguity between the inherent method and this trait method.
+        BunRunner::add(self, packages, dev, optional, ignore_scripts).await
+    }
+
+    async fn remove(&self, package_names: &[&str]) -> Result<()> {
+        BunRunner::remove(self, package_names).await
+    }
+
+    async fn install(&self, ignore_scripts: bool) -> Result<()> {
+        BunRunner::install(self, ignore_scripts).await
+    }
+
+    async fn init(&self) -> Result<()> {
+        BunRunner::init(self).await
     }
 }
 

@@ -8,11 +8,12 @@ pub mod package_json;
 pub mod policy;
 pub mod registry;
 pub mod resolver;
+pub mod runner;
 pub mod semver_resolve;
 pub mod types;
 
-pub use bun::BunRunner;
 pub use config::VigilConfig;
+pub use runner::{PackageRunner, RunnerFactory};
 pub use hash::hash_package_dir;
 pub use error::{Error, Result};
 pub use lockfile::{LockfileDiff, LockedPackage, VigilLockfile};
