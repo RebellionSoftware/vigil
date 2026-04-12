@@ -45,6 +45,7 @@ impl VigilConfig {
         let digest = Sha256::digest(contents.as_bytes());
         let hash = format!("{digest:x}");
         let config: VigilConfig = toml::from_str(&contents)?;
+        config.policy.validate()?;
         Ok((config, Some(hash)))
     }
 }
@@ -87,6 +88,48 @@ pub struct PolicyConfig {
     /// Days of inactivity after which a sudden new publish is flagged. 0 = disabled.
     #[serde(default = "default_inactivity_days")]
     pub inactivity_days: u32,
+}
+
+impl PolicyConfig {
+    /// Validate logical constraints on the policy configuration.
+    ///
+    /// TOML deserialization already rejects type-level errors (e.g. negative
+    /// values for `u32` fields). This method catches semantic errors that the
+    /// type system cannot express: values that are syntactically valid but
+    /// operationally nonsensical.
+    pub fn validate(&self) -> Result<()> {
+        if self.min_age_days > 365 {
+            return Err(Error::Config(format!(
+                "policy.min_age_days = {} is unreasonably large (maximum is 365 days). \
+                 Values above 365 are almost certainly a misconfiguration.",
+                self.min_age_days,
+            )));
+        }
+
+        // inactivity_days = 0 disables the check; any other value must be sane.
+        if self.inactivity_days > 3650 {
+            return Err(Error::Config(format!(
+                "policy.inactivity_days = {} is unreasonably large (maximum is 3650 days). \
+                 Values above 3650 are almost certainly a misconfiguration.",
+                self.inactivity_days,
+            )));
+        }
+
+        // An inactivity window smaller than the age gate is a logic error: every
+        // new publish on an inactive package would already be blocked by the age
+        // gate before inactivity detection could act.
+        if self.inactivity_days > 0 && self.inactivity_days < self.min_age_days {
+            return Err(Error::Config(format!(
+                "policy.inactivity_days ({}) must be greater than or equal to \
+                 policy.min_age_days ({}), or set to 0 to disable. \
+                 An inactivity window shorter than the age gate is always shadowed \
+                 by the age gate and will never trigger.",
+                self.inactivity_days, self.min_age_days,
+            )));
+        }
+
+        Ok(())
+    }
 }
 
 impl Default for PolicyConfig {
@@ -196,5 +239,88 @@ packages = ["colors", "faker"]
         let dir = tempfile::tempdir().unwrap();
         let config = VigilConfig::load(dir.path()).unwrap();
         assert_eq!(config.policy.min_age_days, 7);
+    }
+
+    // ── Policy validation tests ───────────────────────────────────────────────
+
+    #[test]
+    fn valid_policy_passes_validation() {
+        let mut p = PolicyConfig::default();
+        p.min_age_days = 7;
+        p.inactivity_days = 180;
+        assert!(p.validate().is_ok());
+    }
+
+    #[test]
+    fn min_age_days_at_maximum_passes() {
+        let mut p = PolicyConfig::default();
+        p.min_age_days = 365;
+        p.inactivity_days = 365; // must be >= min_age_days when non-zero
+        assert!(p.validate().is_ok());
+    }
+
+    #[test]
+    fn min_age_days_above_maximum_fails() {
+        let mut p = PolicyConfig::default();
+        p.min_age_days = 366;
+        let err = p.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("min_age_days"),
+            "error should mention the field: {err}"
+        );
+    }
+
+    #[test]
+    fn inactivity_days_zero_disables_check_passes() {
+        let mut p = PolicyConfig::default();
+        p.min_age_days = 30;
+        p.inactivity_days = 0;
+        assert!(p.validate().is_ok());
+    }
+
+    #[test]
+    fn inactivity_days_above_maximum_fails() {
+        let mut p = PolicyConfig::default();
+        p.inactivity_days = 3651;
+        let err = p.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("inactivity_days"),
+            "error should mention the field: {err}"
+        );
+    }
+
+    #[test]
+    fn inactivity_days_less_than_min_age_days_fails() {
+        let mut p = PolicyConfig::default();
+        p.min_age_days = 30;
+        p.inactivity_days = 10; // non-zero, smaller than min_age_days
+        let err = p.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("inactivity_days"),
+            "error should mention the field: {err}"
+        );
+    }
+
+    #[test]
+    fn inactivity_days_equal_to_min_age_days_passes() {
+        let mut p = PolicyConfig::default();
+        p.min_age_days = 30;
+        p.inactivity_days = 30;
+        assert!(p.validate().is_ok());
+    }
+
+    #[test]
+    fn load_with_invalid_policy_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("vigil.toml"),
+            "[policy]\nmin_age_days = 400\n",
+        )
+        .unwrap();
+        let err = VigilConfig::load(dir.path()).unwrap_err();
+        assert!(
+            err.to_string().contains("min_age_days"),
+            "error should mention the invalid field: {err}"
+        );
     }
 }

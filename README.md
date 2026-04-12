@@ -94,9 +94,12 @@ vigil audit log                        # show all entries
 vigil audit log --package esbuild      # filter by package
 vigil audit log --event install        # filter by event type
 vigil audit log --last 20              # show last 20 entries
+vigil audit verify                     # verify the hash chain integrity
 ```
 
 Valid event types: `install`, `update`, `remove`, `block`, `import`, `trust`.
+
+`vigil audit verify` walks the log and checks that each entry's `prev_hash` matches the SHA-256 of the previous raw line. A chain break indicates that a log entry was deleted, inserted, or modified. Legacy entries without a `prev_hash` (written before chain support was added) produce a warning but do not fail.
 
 ## Architecture
 
@@ -216,8 +219,14 @@ Removes the package and cleans up any transitives that are no longer needed by o
 # Re-hash all packages and compare to vigil.lock
 vigil verify
 
-# Same, but exit 1 if vigil.lock is missing (for CI pipelines)
+# Exit 1 if vigil.lock is missing (for CI pipelines)
 vigil verify --ci
+
+# Also warn if vigil.lock has uncommitted local changes
+vigil verify --git
+
+# Recommended CI invocation: fail on missing lockfile or uncommitted changes
+vigil verify --ci --git
 ```
 
 `vigil verify` checks three things:
@@ -226,6 +235,8 @@ vigil verify --ci
 3. `vigil.toml` has not been modified since the last install
 
 In `--ci` mode, packages whose disk hash was not yet recorded also cause a failure — every package must have been through a `vigil install` run before CI verify.
+
+`--git` runs `git status --porcelain vigil.lock` and warns if the lockfile has uncommitted local changes. Combined with `--ci`, uncommitted changes are treated as a hard failure. This check is a no-op if `vigil.lock` is listed in `.gitignore`.
 
 ## Configuration
 
@@ -306,6 +317,54 @@ vigil/
 └── tests/
     └── fixtures/           # Registry response fixtures
 ```
+
+## Security Model & Trust Boundary
+
+Understanding what Vigil guarantees — and what it explicitly does not — is essential for using it correctly in a security-sensitive environment.
+
+### What Vigil guarantees
+
+- **Policy checks run before Bun.** No package reaches `bun add` unless it has passed all configured checks. The age gate, inactivity check, postinstall block, and hard blocklist are enforced before any network download occurs.
+- **Content hashes are computed post-install.** After Bun writes to `node_modules`, Vigil computes a SHA-512 hash of every installed package directory and records it in `vigil.lock`. `vigil verify` re-hashes from disk and fails on any mismatch — injected files, replaced binaries, or modified scripts all produce a different digest.
+- **The audit log is tamper-evident.** Each entry in `vigil-audit.log` contains a SHA-256 hash of the previous raw log line, forming a hash chain. Deleting, inserting, or modifying any entry breaks the chain, detectable with `vigil audit verify`.
+
+### What Vigil does NOT guarantee
+
+- **Vigil does not sandbox Bun or inspect downloaded tarballs.** It trusts that npm registry metadata (publish timestamp, version, scripts fields) is accurate. A registry under adversary control could serve false metadata.
+- **Vigil does not authenticate the npm registry.** TLS to the registry is Bun's responsibility. Vigil reads from the npm registry API over HTTPS but performs no certificate pinning.
+- **`vigil.lock` integrity depends on the filesystem.** If an attacker has write access to your project directory, they can also tamper with `vigil.lock`. Vigil's lockfile checksum detects accidental corruption and naive edits, but is not a substitute for filesystem access controls.
+- **The audit log is tamper-evident, not tamper-proof.** A local attacker with write access can replace the entire log (defeating the chain). Commit `vigil-audit.log` to version control to make tampering visible in git history.
+- **Vigil does not protect against a compromised build host.** If the machine running `vigil install` is already compromised, all bets are off.
+
+### Assumed trust boundary
+
+Vigil assumes:
+
+1. **The local filesystem is trusted** — only authorized developers can write to the project directory.
+2. **`vigil.lock` is committed to version control** — git history provides the out-of-band integrity anchor for the lockfile and audit log.
+3. **The npm registry is honest** — metadata fields (`time`, `scripts`, `dist.integrity`) reflect reality.
+
+If any of these assumptions do not hold in your threat model, layer additional controls (e.g., Sigstore provenance, hermetic build environments, reproducible builds).
+
+### Recommended CI pipeline
+
+```yaml
+# Recommended order in CI — verify before install
+- run: vigil verify --ci --git   # fails if lockfile is missing, tampered, or uncommitted
+- run: vigil audit verify        # fails if audit log chain is broken
+- run: bun install               # or vigil install for fresh environments
+```
+
+`vigil verify --ci` exits 1 if `vigil.lock` is missing or any hash mismatches. `vigil verify --git` additionally warns (and in `--ci` mode, fails) if `vigil.lock` has uncommitted local changes. Run verification **before** install in CI to catch a tampered lockfile before it can influence the build.
+
+### Files to commit to version control
+
+| File | Commit? | Notes |
+|------|---------|-------|
+| `vigil.lock` | **Yes** | Contains resolved versions and content hashes — the source of truth |
+| `vigil.toml` | **Yes** | Policy configuration — changes here are auditable |
+| `vigil-audit.log` | **Yes** | Append-only audit trail — git history anchors the hash chain |
+| `bun.lockb` | Yes | Bun's own lockfile — keep in sync |
 
 ## What is not yet implemented
 

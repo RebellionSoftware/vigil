@@ -44,6 +44,9 @@ pub enum Error {
 
     #[error("vigil.lock packages checksum mismatch — the file may have been tampered with or corrupted. Delete vigil.lock and re-run `vigil install` to recover.")]
     LockfileChecksumMismatch,
+
+    #[error("Invalid vigil.toml: {0}")]
+    Config(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
