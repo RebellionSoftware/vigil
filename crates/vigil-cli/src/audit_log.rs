@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const AUDIT_LOG_FILENAME: &str = "vigil-audit.log";
+pub const AUDIT_LOG_FILENAME: &str = "vigil-audit.log";
 
 /// A single entry in the vigil audit log.
 ///
@@ -65,10 +65,7 @@ fn last_line_hash(file: &mut std::fs::File) -> std::io::Result<Option<String>> {
             last = Some(line);
         }
     }
-    Ok(last.map(|l| {
-        let digest = Sha256::digest(l.as_bytes());
-        format!("{digest:x}")
-    }))
+    Ok(last.map(|l| hex::encode(Sha256::digest(l.as_bytes()))))
 }
 
 /// Append-only audit log stored as NDJSON.
@@ -145,8 +142,16 @@ impl AuditLog {
                 // Strip control characters before printing to stderr to prevent
                 // ANSI escape injection from a crafted log file.
                 const MAX_DISPLAY: usize = 120;
-                let safe: String = trimmed.chars().filter(|c| !c.is_control()).take(MAX_DISPLAY).collect();
-                let ellipsis = if trimmed.len() > MAX_DISPLAY { "…" } else { "" };
+                let safe: String = trimmed
+                    .chars()
+                    .filter(|c| !c.is_control())
+                    .take(MAX_DISPLAY)
+                    .collect();
+                let ellipsis = if trimmed.len() > MAX_DISPLAY {
+                    "…"
+                } else {
+                    ""
+                };
                 eprintln!(
                     "  {} warning: skipped malformed line in {}: {}{ellipsis}",
                     "!".yellow(),
@@ -277,7 +282,10 @@ mod tests {
 
         // First entry: no prev_hash
         let e0: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
-        assert!(e0.get("prev_hash").is_none(), "first entry must have no prev_hash");
+        assert!(
+            e0.get("prev_hash").is_none(),
+            "first entry must have no prev_hash"
+        );
 
         // Second entry: prev_hash == SHA-256 of first raw line
         let e1: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
@@ -300,7 +308,11 @@ mod tests {
         std::fs::write(&path, format!("{good1}\nnot-json\n{good2}\n")).unwrap();
 
         let entries = log.read_all().unwrap();
-        assert_eq!(entries.len(), 2, "valid entries after a malformed line must be parsed");
+        assert_eq!(
+            entries.len(),
+            2,
+            "valid entries after a malformed line must be parsed"
+        );
         assert_eq!(entries[0].package, "ms");
         assert_eq!(entries[1].package, "express");
     }
