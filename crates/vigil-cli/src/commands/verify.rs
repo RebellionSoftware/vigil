@@ -13,6 +13,15 @@ pub struct VerifyArgs {
     /// Exit 1 if vigil.lock is missing (useful in CI).
     #[arg(long)]
     pub ci: bool,
+
+    /// Check for uncommitted local changes to vigil.lock using git status.
+    /// Warns if the lockfile has been modified but not committed — such changes
+    /// may indicate tampering in a shared or CI environment.
+    ///
+    /// Combined with --ci, an uncommitted vigil.lock is treated as a hard failure.
+    /// Has no effect if vigil.lock is listed in .gitignore.
+    #[arg(long)]
+    pub git: bool,
 }
 
 pub async fn run(args: VerifyArgs) -> miette::Result<()> {
@@ -128,6 +137,19 @@ pub async fn run(args: VerifyArgs) -> miette::Result<()> {
         }
     }
 
+    // ── Git-backed integrity check ─────────────────────────────────────────────
+    if args.git {
+        if let Some(msg) = check_git_status(&project_dir) {
+            eprintln!("  {} {msg}", "!".yellow());
+            eprintln!(
+                "    Run `git diff vigil.lock` to see changes, or `git checkout vigil.lock` to restore"
+            );
+            if args.ci {
+                failures.push(msg);
+            }
+        }
+    }
+
     // ── Report ────────────────────────────────────────────────────────────────
     if failures.is_empty() {
         let n = lockfile.packages.len();
@@ -145,5 +167,133 @@ pub async fn run(args: VerifyArgs) -> miette::Result<()> {
         }
         eprintln!();
         Err(miette::miette!("{} verification failure{}", failures.len(), if failures.len() == 1 { "" } else { "s" }))
+    }
+}
+
+/// Run `git status --porcelain vigil.lock` and return a warning message if the
+/// file has uncommitted local changes, or `None` if it is clean.
+///
+/// Returns `None` (with a warning to stderr) if git is not available or fails,
+/// so callers can treat the check as non-fatal degradation.
+fn check_git_status(project_dir: &std::path::Path) -> Option<String> {
+    let output = match std::process::Command::new("git")
+        .args(["status", "--porcelain", "vigil.lock"])
+        .current_dir(project_dir)
+        .output()
+    {
+        Ok(output) => output,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!("  {} git not found — skipping --git check", "!".yellow());
+            return None;
+        }
+        Err(e) => {
+            eprintln!("  {} could not run git status: {e}", "!".yellow());
+            return None;
+        }
+    };
+
+    if !output.status.success() {
+        // git failed (e.g. not a git repository, safe.directory rejection).
+        // Warn and skip rather than panic or produce a false positive.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!(
+            "  {} git status failed (exit {}): {} — skipping --git check",
+            "!".yellow(),
+            output.status.code().unwrap_or(-1),
+            stderr.trim(),
+        );
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !stdout.trim().is_empty() {
+        return Some(
+            "vigil.lock has uncommitted local changes — lockfile may have been tampered with"
+                .to_string(),
+        );
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_git_dir_returns_none() {
+        // A directory with no .git ancestor causes git to exit 128.
+        // check_git_status should warn to stderr and return None (not panic).
+        let dir = tempfile::tempdir().unwrap();
+        let result = check_git_status(dir.path());
+        assert!(result.is_none(), "non-git directory should return None, got: {result:?}");
+    }
+
+    #[test]
+    fn clean_committed_lockfile_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Skip if git is not available on this machine.
+        if std::process::Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+
+        // Initialise a repo, commit vigil.lock, then verify it is clean.
+        let run = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir.path())
+                .env("GIT_AUTHOR_NAME", "test")
+                .env("GIT_AUTHOR_EMAIL", "test@test.com")
+                .env("GIT_COMMITTER_NAME", "test")
+                .env("GIT_COMMITTER_EMAIL", "test@test.com")
+                .output()
+                .unwrap()
+        };
+
+        run(&["init"]);
+        run(&["config", "user.email", "test@test.com"]);
+        run(&["config", "user.name", "test"]);
+        std::fs::write(dir.path().join("vigil.lock"), "{}").unwrap();
+        run(&["add", "vigil.lock"]);
+        run(&["commit", "-m", "init"]);
+
+        let result = check_git_status(dir.path());
+        assert!(result.is_none(), "clean committed lockfile should return None");
+    }
+
+    #[test]
+    fn dirty_lockfile_returns_some() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Skip if git is not available on this machine.
+        if std::process::Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+
+        let run = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir.path())
+                .env("GIT_AUTHOR_NAME", "test")
+                .env("GIT_AUTHOR_EMAIL", "test@test.com")
+                .env("GIT_COMMITTER_NAME", "test")
+                .env("GIT_COMMITTER_EMAIL", "test@test.com")
+                .output()
+                .unwrap()
+        };
+
+        run(&["init"]);
+        run(&["config", "user.email", "test@test.com"]);
+        run(&["config", "user.name", "test"]);
+        std::fs::write(dir.path().join("vigil.lock"), "{}").unwrap();
+        run(&["add", "vigil.lock"]);
+        run(&["commit", "-m", "init"]);
+
+        // Modify the lockfile without committing.
+        std::fs::write(dir.path().join("vigil.lock"), "{\"modified\": true}").unwrap();
+
+        let result = check_git_status(dir.path());
+        assert!(result.is_some(), "dirty lockfile should return a warning message");
     }
 }
