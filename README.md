@@ -146,8 +146,8 @@ User Command
 ### Starting a new project
 
 ```bash
-vigil init          # uses bun (default)
-vigil init --npm    # uses npm instead
+vigil init                            # uses bun (default)
+vigil init --package-manager npm      # uses npm instead
 ```
 
 Creates `vigil.toml` with default policy settings and runs the package manager's init to scaffold the project.

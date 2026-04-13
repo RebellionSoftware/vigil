@@ -56,9 +56,9 @@ pub struct InitArgs {
     #[arg(long)]
     pub force: bool,
 
-    /// Use npm instead of bun as the package manager.
-    #[arg(long)]
-    pub npm: bool,
+    /// Package manager to use. Defaults to "bun". Supported values: bun, npm.
+    #[arg(long, value_name = "NAME", default_value = "bun")]
+    pub package_manager: String,
 }
 
 pub async fn run(args: InitArgs) -> miette::Result<()> {
@@ -74,10 +74,18 @@ pub async fn run(args: InitArgs) -> miette::Result<()> {
         ));
     }
 
+    // ── Validate package manager before any I/O ───────────────────────────────
+    let package_manager = args.package_manager.as_str();
+    match package_manager {
+        "bun" | "npm" => {}
+        other => return Err(miette::miette!(
+            "unknown package_manager '{other}' — supported values: bun, npm"
+        )),
+    }
+
     // ── Write vigil.toml ──────────────────────────────────────────────────────
-    let package_manager = if args.npm { "npm" } else { "bun" };
-    let template = if args.npm {
-        format!("package_manager = \"npm\"\n\n{VIGIL_TOML_TEMPLATE}")
+    let template = if package_manager != "bun" {
+        format!("package_manager = \"{package_manager}\"\n\n{VIGIL_TOML_TEMPLATE}")
     } else {
         VIGIL_TOML_TEMPLATE.to_string()
     };
@@ -94,7 +102,14 @@ pub async fn run(args: InitArgs) -> miette::Result<()> {
     eprintln!("  {} Running {} init…\n", "→".dimmed(), package_manager);
 
     let runner = RunnerFactory::create(&project_dir, package_manager).await
-        .map_err(|e| miette::miette!("{e}"))?;
+        .map_err(|e| {
+            let url = match package_manager {
+                "npm" => " Visit https://nodejs.org to install.",
+                "bun" => " Visit https://bun.sh to install.",
+                _ => "",
+            };
+            miette::miette!("{e}{url}")
+        })?;
 
     runner.init().await
         .map_err(|e| miette::miette!("{e}"))?;

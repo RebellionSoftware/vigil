@@ -4,7 +4,7 @@ use tokio::process::Command;
 use crate::{
     error::{Error, Result},
     runner::PackageRunner,
-    types::PackageSpec,
+    types::{PackageName, PackageSpec},
 };
 
 /// Wraps the Bun subprocess for package installation operations.
@@ -20,19 +20,17 @@ impl BunRunner {
     /// Find `bun` in `$PATH` and verify it is executable.
     ///
     /// Returns `Err(Error::PackageManagerNotFound)` if `bun` is not found in `$PATH`.
-    ///
-    /// Uses `spawn_blocking` so the probe does not block a Tokio worker thread.
     pub async fn new(project_dir: &Path) -> Result<Self> {
-        let status = tokio::task::spawn_blocking(|| {
-            std::process::Command::new("bun")
-                .arg("--version")
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-        })
-        .await
-        .map_err(|_| Error::PackageManagerNotFound("bun".to_string()))? // JoinError — task panicked
-        .map_err(|_| Error::PackageManagerNotFound("bun".to_string()))?; // io::Error — bun not in PATH
+        let status = tokio::process::Command::new("bun")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .await
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::NotFound => Error::PackageManagerNotFound("bun".to_string()),
+                _ => Error::Io(e),
+            })?;
 
         if !status.success() {
             return Err(Error::PackageManagerNotFound("bun".to_string()));
@@ -60,10 +58,11 @@ impl BunRunner {
         optional: bool,
         ignore_scripts: bool,
     ) -> Result<()> {
-        debug_assert!(
-            !(dev && optional),
-            "dev and optional are mutually exclusive; caller must not set both"
-        );
+        if dev && optional {
+            return Err(Error::Config(
+                "add(): dev and optional flags are mutually exclusive".to_string(),
+            ));
+        }
         let mut cmd = Command::new(&self.bun_path);
         cmd.current_dir(&self.project_dir);
         cmd.arg("add").arg("--exact");
@@ -82,11 +81,12 @@ impl BunRunner {
     }
 
     /// Run `bun remove <name>…`.
-    pub async fn remove(&self, package_names: &[&str]) -> Result<()> {
+    pub async fn remove(&self, package_names: &[PackageName]) -> Result<()> {
         let mut cmd = Command::new(&self.bun_path);
+        let name_strs: Vec<&str> = package_names.iter().map(|n| n.as_str()).collect();
         cmd.current_dir(&self.project_dir)
             .arg("remove")
-            .args(package_names);
+            .args(&name_strs);
         self.run(cmd).await
     }
 
@@ -145,11 +145,15 @@ impl BunRunner {
         }
 
         let code = output.status.code().unwrap_or(-1);
-        let combined = format!(
-            "stdout: {}\nstderr: {}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr),
-        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let combined = if stderr.trim().is_empty() {
+            stdout.trim().to_string()
+        } else if stdout.trim().is_empty() {
+            stderr.trim().to_string()
+        } else {
+            format!("{}\n{}", stderr.trim(), stdout.trim())
+        };
         Err(Error::PackageManagerFailed { manager: "bun".to_string(), status: code, output: combined })
     }
 }
@@ -173,7 +177,8 @@ impl PackageRunner for BunRunner {
         BunRunner::add(self, packages, dev, optional, ignore_scripts).await
     }
 
-    async fn remove(&self, package_names: &[&str]) -> Result<()> {
+    async fn remove(&self, package_names: &[PackageName]) -> Result<()> {
+        // UFCS avoids ambiguity between the inherent method and this trait method.
         BunRunner::remove(self, package_names).await
     }
 

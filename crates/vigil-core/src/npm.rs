@@ -5,7 +5,7 @@ use tokio::process::Command;
 use crate::{
     error::{Error, Result},
     runner::PackageRunner,
-    types::PackageSpec,
+    types::{PackageName, PackageSpec},
 };
 
 /// Wraps the npm subprocess for package installation operations.
@@ -21,19 +21,17 @@ impl NpmRunner {
     /// Find `npm` in `$PATH` and verify it is executable.
     ///
     /// Returns `Err(Error::PackageManagerNotFound)` if `npm` is not found in `$PATH`.
-    ///
-    /// Uses `spawn_blocking` so the probe does not block a Tokio worker thread.
     pub async fn new(project_dir: &Path) -> Result<Self> {
-        let status = tokio::task::spawn_blocking(|| {
-            std::process::Command::new("npm")
-                .arg("--version")
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-        })
-        .await
-        .map_err(|_| Error::PackageManagerNotFound("npm".to_string()))? // JoinError — task panicked
-        .map_err(|_| Error::PackageManagerNotFound("npm".to_string()))?; // io::Error — npm not in PATH
+        let status = tokio::process::Command::new("npm")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .await
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::NotFound => Error::PackageManagerNotFound("npm".to_string()),
+                _ => Error::Io(e),
+            })?;
 
         if !status.success() {
             return Err(Error::PackageManagerNotFound("npm".to_string()));
@@ -53,10 +51,11 @@ impl NpmRunner {
         optional: bool,
         ignore_scripts: bool,
     ) -> Result<()> {
-        debug_assert!(
-            !(dev && optional),
-            "dev and optional are mutually exclusive; caller must not set both"
-        );
+        if dev && optional {
+            return Err(Error::Config(
+                "add(): dev and optional flags are mutually exclusive".to_string(),
+            ));
+        }
         let mut cmd = Command::new(&self.npm_path);
         cmd.current_dir(&self.project_dir);
         cmd.arg("install").arg("--save-exact");
@@ -75,11 +74,12 @@ impl NpmRunner {
     }
 
     /// Run `npm uninstall <name>…`.
-    pub async fn remove(&self, package_names: &[&str]) -> Result<()> {
+    pub async fn remove(&self, package_names: &[PackageName]) -> Result<()> {
         let mut cmd = Command::new(&self.npm_path);
+        let name_strs: Vec<&str> = package_names.iter().map(|n| n.as_str()).collect();
         cmd.current_dir(&self.project_dir)
             .arg("uninstall")
-            .args(package_names);
+            .args(&name_strs);
         self.run(cmd).await
     }
 
@@ -135,11 +135,15 @@ impl NpmRunner {
         }
 
         let code = output.status.code().unwrap_or(-1);
-        let combined = format!(
-            "stdout: {}\nstderr: {}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr),
-        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let combined = if stderr.trim().is_empty() {
+            stdout.trim().to_string()
+        } else if stdout.trim().is_empty() {
+            stderr.trim().to_string()
+        } else {
+            format!("{}\n{}", stderr.trim(), stdout.trim())
+        };
         Err(Error::PackageManagerFailed {
             manager: "npm".to_string(),
             status: code,
@@ -166,7 +170,8 @@ impl PackageRunner for NpmRunner {
         NpmRunner::add(self, packages, dev, optional, ignore_scripts).await
     }
 
-    async fn remove(&self, package_names: &[&str]) -> Result<()> {
+    async fn remove(&self, package_names: &[PackageName]) -> Result<()> {
+        // UFCS avoids ambiguity between the inherent method and this trait method.
         NpmRunner::remove(self, package_names).await
     }
 
@@ -182,6 +187,21 @@ impl PackageRunner for NpmRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Verify that passing both `dev` and `optional` returns a config error
+    /// rather than silently misbehaving.
+    #[tokio::test]
+    async fn add_dev_and_optional_returns_config_error() {
+        let runner = NpmRunner {
+            npm_path: PathBuf::from("npm"),
+            project_dir: std::env::temp_dir(),
+        };
+        let result = runner.add(&[], true, true, false).await;
+        assert!(
+            matches!(result, Err(Error::Config(_))),
+            "expected Error::Config for dev+optional, got: {result:?}"
+        );
+    }
 
     /// Verify that `run` returns `PackageManagerNotFound` when the binary
     /// does not exist.

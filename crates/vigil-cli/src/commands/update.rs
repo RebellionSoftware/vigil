@@ -147,10 +147,22 @@ pub async fn run(args: UpdateArgs) -> miette::Result<()> {
 
     // ── Run package manager install (re-resolves from updated package.json + overrides)
     let runner = RunnerFactory::create(&project_dir, &config.package_manager).await
-        .map_err(|e| miette::miette!("{e}"))?;
+        .map_err(|e| {
+            let url = match config.package_manager.as_str() {
+                "npm" => " Visit https://nodejs.org to install.",
+                "bun" => " Visit https://bun.sh to install.",
+                _ => "",
+            };
+            miette::miette!("{e}{url}")
+        })?;
+
+    // Honour postinstall approvals recorded in the lockfile — same logic as install.rs.
+    let any_approved = existing_lockfile.packages.values().any(|p| p.postinstall_approved)
+        || !config.bypass.allow_postinstall.is_empty();
+    let ignore_scripts = config.policy.block_postinstall && !any_approved;
 
     eprintln!("Running {} install…", config.package_manager);
-    runner.install(config.policy.block_postinstall)
+    runner.install(ignore_scripts)
         .await
         .map_err(|e| miette::miette!("{e}"))?;
 

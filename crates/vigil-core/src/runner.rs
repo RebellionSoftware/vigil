@@ -5,12 +5,12 @@ use crate::{
     bun::BunRunner,
     error::{Error, Result},
     npm::NpmRunner,
-    types::PackageSpec,
+    types::{PackageName, PackageSpec},
 };
 
 /// Abstraction over package manager subprocess runners.
 ///
-/// Implemented by [`BunRunner`] and (in a later task) `NpmRunner`.
+/// Implemented by [`BunRunner`] and [`NpmRunner`].
 /// CLI commands receive a `Box<dyn PackageRunner>` from [`RunnerFactory`]
 /// and call this trait — they never import a concrete runner type directly.
 #[async_trait]
@@ -31,7 +31,7 @@ pub trait PackageRunner: Send + Sync + std::fmt::Debug {
     ) -> Result<()>;
 
     /// Run the equivalent of `bun remove` / `npm uninstall`.
-    async fn remove(&self, package_names: &[&str]) -> Result<()>;
+    async fn remove(&self, package_names: &[PackageName]) -> Result<()>;
 
     /// Run a bare install from the existing manifest and lockfile
     /// (`bun install` / `npm install`).

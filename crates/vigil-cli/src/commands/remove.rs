@@ -76,17 +76,20 @@ pub async fn run(args: RemoveArgs) -> miette::Result<()> {
     let removed_name_refs: HashSet<&str> = removed_names.iter().map(|s| s.as_str()).collect();
     let orphan_keys = collect_orphans(&lockfile, &removed_name_refs);
 
-    // ── Remove direct packages ────────────────────────────────────────────────
+    // ── Collect audit data and mutate in-memory lockfile ─────────────────────
+    // Audit entries are written only after all durable state (overrides, lockfile)
+    // has been committed, so a runner failure leaves no phantom audit records.
+    let now = chrono::Utc::now();
+    let mut pending_audits: Vec<AuditEntry> = Vec::new();
+
     for key in &direct_keys {
         let (name, version) = key.rsplit_once('@')
             .expect("lockfile key missing '@' — integrity check should have caught this");
         let (dev, optional) = lockfile.packages.get(key)
             .map(|p| (p.dev, p.optional))
             .unwrap_or_default();
-        lockfile.packages.remove(key);
-        eprintln!("  {} {key}", "-".red().bold());
-        if let Err(e) = audit.append(&AuditEntry {
-            ts: chrono::Utc::now(),
+        pending_audits.push(AuditEntry {
+            ts: now,
             event: "remove".to_string(),
             package: name.to_string(),
             version: version.to_string(),
@@ -96,22 +99,19 @@ pub async fn run(args: RemoveArgs) -> miette::Result<()> {
             dev, optional,
             reason: None,
             prev_hash: None,
-        }) {
-            eprintln!("  {} failed to write audit log: {e}", "!".yellow());
-        }
+        });
+        lockfile.packages.remove(key);
+        eprintln!("  {} {key}", "-".red().bold());
     }
 
-    // ── Remove orphaned transitives ───────────────────────────────────────────
     for orphan_key in &orphan_keys {
         let (oname, over) = orphan_key.rsplit_once('@')
             .expect("lockfile key missing '@' — integrity check should have caught this");
         let (dev, optional) = lockfile.packages.get(orphan_key)
             .map(|p| (p.dev, p.optional))
             .unwrap_or_default();
-        lockfile.packages.remove(orphan_key);
-        eprintln!("  {} {} (orphaned transitive)", "-".red(), orphan_key);
-        if let Err(e) = audit.append(&AuditEntry {
-            ts: chrono::Utc::now(),
+        pending_audits.push(AuditEntry {
+            ts: now,
             event: "remove".to_string(),
             package: oname.to_string(),
             version: over.to_string(),
@@ -121,20 +121,26 @@ pub async fn run(args: RemoveArgs) -> miette::Result<()> {
             dev, optional,
             reason: Some(format!("orphaned transitive of {}", removed_names.iter().cloned().collect::<Vec<_>>().join(", "))),
             prev_hash: None,
-        }) {
-            eprintln!("  {} failed to write audit log: {e}", "!".yellow());
-        }
+        });
+        lockfile.packages.remove(orphan_key);
+        eprintln!("  {} {} (orphaned transitive)", "-".red(), orphan_key);
     }
 
-    // ── Run package manager remove ────────────────────────────────────────────────
+    // ── Run package manager remove ────────────────────────────────────────────
     // Run the package manager BEFORE writing overrides or lockfile so that if the
     // runner fails (binary missing, network error, non-zero exit), no durable state
     // has changed and the command is a clean retry.
     let runner = RunnerFactory::create(&project_dir, &config.package_manager).await
-        .map_err(|e| miette::miette!("{e}"))?;
+        .map_err(|e| {
+            let url = match config.package_manager.as_str() {
+                "npm" => " Visit https://nodejs.org to install.",
+                "bun" => " Visit https://bun.sh to install.",
+                _ => "",
+            };
+            miette::miette!("{e}{url}")
+        })?;
 
-    let pkg_refs: Vec<&str> = validated.iter().map(|n| n.as_str()).collect();
-    runner.remove(&pkg_refs)
+    runner.remove(&validated)
         .await
         .map_err(|e| miette::miette!("{e}"))?;
 
@@ -147,6 +153,13 @@ pub async fn run(args: RemoveArgs) -> miette::Result<()> {
     lockfile
         .write(&project_dir)
         .map_err(|e| miette::miette!("failed to write vigil.lock: {e}"))?;
+
+    // ── Write audit entries (all durable state committed — no phantom records) ─
+    for entry in pending_audits {
+        if let Err(e) = audit.append(&entry) {
+            eprintln!("  {} failed to write audit log: {e}", "!".yellow());
+        }
+    }
 
     eprintln!(
         "\n  {} Removed {}",

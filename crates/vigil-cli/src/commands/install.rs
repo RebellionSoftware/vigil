@@ -205,7 +205,14 @@ pub async fn run(args: InstallArgs) -> miette::Result<()> {
 
     // ── 8. Run package manager add ────────────────────────────────────────────
     let runner = RunnerFactory::create(&project_dir, &config.package_manager).await
-        .map_err(|e| miette::miette!("{e}"))?;
+        .map_err(|e| {
+            let url = match config.package_manager.as_str() {
+                "npm" => " Visit https://nodejs.org to install.",
+                "bun" => " Visit https://bun.sh to install.",
+                _ => "",
+            };
+            miette::miette!("{e}{url}")
+        })?;
 
     let direct_specs: Vec<_> = tree
         .direct_nodes()
