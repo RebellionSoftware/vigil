@@ -47,6 +47,8 @@ Flags packages that were dormant for a long time and then suddenly published a n
 - Applies to transitives when `transitive_velocity_check = true`
 - Bypassable per-package via `vigil trust <package> --allow inactivity`
 
+**Settle grace period:** if the dormancy-breaking version is already `inactivity_settle_days` old (default: 60), the flag is suppressed automatically. This prevents mass false-positives when importing an existing project where many packages broke dormancy months ago. Set `inactivity_settle_days = 0` to always flag regardless of how old the activating version is.
+
 ### Postinstall Script Blocking
 
 Lifecycle scripts (`postinstall`, `preinstall`, `install`) are **blocked by default**. Scripts are a primary vector for supply chain attacks — they run arbitrary code at install time with no review.
@@ -264,6 +266,11 @@ transitive_age_gate = true
 # Flag packages that were dormant for N days and then published a new version.
 # Set to 0 to disable.
 inactivity_days = 180
+
+# Suppress the inactivity flag if the dormancy-breaking version is at least this
+# many days old. Useful when importing existing projects — packages that broke
+# dormancy months ago are no longer a fresh risk. Set to 0 to always flag.
+inactivity_settle_days = 60
 
 # Apply the inactivity check to transitive dependencies.
 transitive_velocity_check = true

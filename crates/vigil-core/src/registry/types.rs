@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Full package document from the npm registry.
 /// Fetched via `GET https://registry.npmjs.org/<name>`.
@@ -35,7 +36,9 @@ impl PackageMetadata {
 /// Metadata for a single version of a package.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VersionMetadata {
+    #[serde(default)]
     pub name: String,
+    #[serde(default)]
     pub version: String,
 
     /// Runtime dependency ranges.
@@ -46,12 +49,14 @@ pub struct VersionMetadata {
     #[serde(rename = "peerDependencies", default)]
     pub peer_dependencies: HashMap<String, String>,
 
-    /// Distribution info (tarball URL, hash).
+    /// Distribution info (tarball URL, hash). Missing in some very old registry entries.
+    #[serde(default)]
     pub dist: DistInfo,
 
     /// Lifecycle scripts (look for "postinstall", "preinstall", "install").
+    /// Values can be strings or objects in old registry entries — we only check key presence.
     #[serde(default)]
-    pub scripts: HashMap<String, String>,
+    pub scripts: HashMap<String, Value>,
 
     /// Set by npm when any install script is present.
     #[serde(rename = "hasInstallScript", default)]
@@ -72,15 +77,17 @@ impl VersionMetadata {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DistInfo {
     /// SRI hash of the tarball: "sha512-<base64>".
     pub integrity: Option<String>,
 
     /// Hex SHA-1 of the tarball (legacy field).
+    #[serde(default)]
     pub shasum: String,
 
     /// URL to download the tarball.
+    #[serde(default)]
     pub tarball: String,
 }
 
@@ -97,7 +104,7 @@ mod tests {
     #[test]
     fn has_postinstall_via_scripts_map() {
         let mut scripts = HashMap::new();
-        scripts.insert("postinstall".to_string(), "node ./setup.js".to_string());
+        scripts.insert("postinstall".to_string(), Value::String("node ./setup.js".to_string()));
         let v = VersionMetadata {
             name: "pkg".to_string(),
             version: "1.0.0".to_string(),

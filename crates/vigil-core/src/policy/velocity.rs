@@ -3,6 +3,7 @@ use crate::{
     resolver::ResolvedNode,
 };
 use super::{CheckOutcome, CheckResult};
+use chrono::Utc;
 
 pub fn check(node: &ResolvedNode, config: &PolicyConfig, bypass: &BypassConfig) -> Vec<CheckResult> {
     if config.inactivity_days == 0 {
@@ -34,13 +35,38 @@ pub fn check(node: &ResolvedNode, config: &PolicyConfig, bypass: &BypassConfig) 
             ),
         },
 
-        Some(gap_days) if gap_days >= config.inactivity_days as i64 => CheckOutcome::Blocked {
-            reason: format!(
-                "'{name}' was dormant for {gap_days} days before this publish — \
-                 sudden activity after long inactivity is a common account-takeover signal. \
-                 Run `vigil trust {name} --allow inactivity` to approve after reviewing the changelog."
-            ),
-        },
+        Some(gap_days) if gap_days >= config.inactivity_days as i64 => {
+            // If the dormancy-breaking version is old enough it has had time to be
+            // scrutinised by the community. Allow it through rather than forcing a
+            // manual bypass on every package in an existing import.
+            if config.inactivity_settle_days > 0 {
+                let days_old = (Utc::now() - node.published_at).num_days();
+                if days_old >= config.inactivity_settle_days as i64 {
+                    CheckOutcome::Passed
+                } else {
+                    CheckOutcome::Blocked {
+                        reason: format!(
+                            "'{name}' was dormant for {gap_days} days before this publish, \
+                             and the activating version is only {days_old} day(s) old \
+                             (settle threshold: {} days) — \
+                             sudden activity after long inactivity is a common account-takeover signal. \
+                             Run `vigil trust {name} --allow inactivity` to approve after reviewing \
+                             the changelog, or wait until the version is {} days old.",
+                            config.inactivity_settle_days,
+                            config.inactivity_settle_days,
+                        ),
+                    }
+                }
+            } else {
+                CheckOutcome::Blocked {
+                    reason: format!(
+                        "'{name}' was dormant for {gap_days} days before this publish — \
+                         sudden activity after long inactivity is a common account-takeover signal. \
+                         Run `vigil trust {name} --allow inactivity` to approve after reviewing the changelog."
+                    ),
+                }
+            }
+        }
 
         Some(_) => CheckOutcome::Passed,
     };
@@ -65,6 +91,10 @@ mod tests {
     use std::collections::HashMap;
 
     fn make_node(name: &str, days_since_prior: Option<i64>) -> ResolvedNode {
+        make_node_aged(name, days_since_prior, 10)
+    }
+
+    fn make_node_aged(name: &str, days_since_prior: Option<i64>, published_days_ago: i64) -> ResolvedNode {
         ResolvedNode {
             spec: PackageSpec::new(
                 PackageName::new(name).unwrap(),
@@ -86,7 +116,7 @@ mod tests {
                 has_install_script: false,
                 maintainers: vec![],
             },
-            published_at: Utc::now() - Duration::days(10),
+            published_at: Utc::now() - Duration::days(published_days_ago),
             is_direct: true,
             has_install_script: false,
             days_since_prior_publish: days_since_prior,
@@ -188,5 +218,64 @@ mod tests {
         let node = make_node("tampered-pkg", Some(i64::MAX));
         let results = check(&node, &default_config(), &bypass);
         assert!(results[0].outcome.is_passed(), "bypass should work even for tampered timestamps");
+    }
+
+    // ── inactivity_settle_days tests ─────────────────────────────────────────
+
+    #[test]
+    fn settled_version_passes_despite_dormancy() {
+        // Package was dormant 400 days, but the activating version is 90 days old.
+        // Default settle threshold is 60 — should pass.
+        let node = make_node_aged("old-revival", Some(400), 90);
+        let results = check(&node, &default_config(), &default_bypass());
+        assert!(results[0].outcome.is_passed(), "settled version should pass velocity check");
+    }
+
+    #[test]
+    fn fresh_revival_still_blocks() {
+        // Package was dormant 400 days, and the activating version is only 5 days old.
+        // Default settle threshold is 60 — should block.
+        let node = make_node_aged("fresh-revival", Some(400), 5);
+        let results = check(&node, &default_config(), &default_bypass());
+        assert!(results[0].outcome.is_blocked(), "recent activating version should still block");
+    }
+
+    #[test]
+    fn settle_reason_mentions_threshold_and_age() {
+        let node = make_node_aged("fresh-revival", Some(400), 5);
+        let results = check(&node, &default_config(), &default_bypass());
+        match &results[0].outcome {
+            CheckOutcome::Blocked { reason } => {
+                assert!(reason.contains("60"), "reason should mention settle threshold: {reason}");
+                assert!(reason.contains("5"), "reason should mention current age: {reason}");
+            }
+            _ => panic!("expected blocked"),
+        }
+    }
+
+    #[test]
+    fn settle_disabled_always_blocks() {
+        // inactivity_settle_days = 0 means never auto-settle.
+        let mut config = default_config();
+        config.inactivity_settle_days = 0;
+        // Even a version 500 days old should be blocked when settle is disabled.
+        let node = make_node_aged("no-settle-pkg", Some(400), 500);
+        let results = check(&node, &config, &default_bypass());
+        assert!(results[0].outcome.is_blocked(), "settle disabled should always block dormancy");
+    }
+
+    #[test]
+    fn settle_exactly_at_threshold_passes() {
+        // Version is exactly 60 days old with default 60-day threshold.
+        let node = make_node_aged("exact-settle", Some(400), 60);
+        let results = check(&node, &default_config(), &default_bypass());
+        assert!(results[0].outcome.is_passed(), "version at exact settle threshold should pass");
+    }
+
+    #[test]
+    fn settle_one_day_short_still_blocks() {
+        let node = make_node_aged("almost-settled", Some(400), 59);
+        let results = check(&node, &default_config(), &default_bypass());
+        assert!(results[0].outcome.is_blocked(), "one day before settle threshold should still block");
     }
 }

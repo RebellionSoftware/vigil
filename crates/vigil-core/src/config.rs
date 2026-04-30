@@ -102,6 +102,12 @@ pub struct PolicyConfig {
     /// Days of inactivity after which a sudden new publish is flagged. 0 = disabled.
     #[serde(default = "default_inactivity_days")]
     pub inactivity_days: u32,
+
+    /// How old the dormancy-breaking version must be (in days) before the velocity
+    /// check is suppressed. If the activating version is at least this many days old
+    /// it is considered "settled" and allowed through. 0 = always flag regardless of age.
+    #[serde(default = "default_inactivity_settle_days")]
+    pub inactivity_settle_days: u32,
 }
 
 impl PolicyConfig {
@@ -142,6 +148,14 @@ impl PolicyConfig {
             )));
         }
 
+        if self.inactivity_settle_days > 365 {
+            return Err(Error::Config(format!(
+                "policy.inactivity_settle_days = {} is unreasonably large (maximum is 365 days). \
+                 Values above 365 are almost certainly a misconfiguration.",
+                self.inactivity_settle_days,
+            )));
+        }
+
         Ok(())
     }
 }
@@ -158,6 +172,7 @@ impl Default for PolicyConfig {
             transitive_age_gate: true,
             transitive_velocity_check: true,
             inactivity_days: default_inactivity_days(),
+            inactivity_settle_days: default_inactivity_settle_days(),
         }
     }
 }
@@ -172,6 +187,10 @@ fn default_min_age_days() -> u32 {
 
 fn default_inactivity_days() -> u32 {
     180
+}
+
+fn default_inactivity_settle_days() -> u32 {
+    60
 }
 
 fn default_true() -> bool {
@@ -218,6 +237,7 @@ mod tests {
         assert!(!config.policy.allow_prerelease);
         assert!(!config.policy.require_provenance);
         assert_eq!(config.policy.inactivity_days, 180);
+        assert_eq!(config.policy.inactivity_settle_days, 60);
     }
 
     #[test]
@@ -357,6 +377,43 @@ packages = ["colors", "faker"]
         p.min_age_days = 0;
         p.inactivity_days = 30;
         assert!(p.validate().is_ok());
+    }
+
+    #[test]
+    fn inactivity_settle_days_above_maximum_fails() {
+        let mut p = PolicyConfig::default();
+        p.inactivity_settle_days = 366;
+        let err = p.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("inactivity_settle_days"),
+            "error should mention the field: {err}"
+        );
+    }
+
+    #[test]
+    fn inactivity_settle_days_zero_is_valid() {
+        let mut p = PolicyConfig::default();
+        p.inactivity_settle_days = 0;
+        assert!(p.validate().is_ok());
+    }
+
+    #[test]
+    fn inactivity_settle_days_at_maximum_passes() {
+        let mut p = PolicyConfig::default();
+        p.inactivity_settle_days = 365;
+        assert!(p.validate().is_ok());
+    }
+
+    #[test]
+    fn parse_inactivity_settle_days_from_toml() {
+        let toml = r#"
+[policy]
+inactivity_days = 180
+inactivity_settle_days = 90
+"#;
+        let config: VigilConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.policy.inactivity_settle_days, 90);
+        assert!(config.policy.validate().is_ok());
     }
 
     #[test]

@@ -51,6 +51,9 @@ pub enum Error {
 
     #[error("Invalid vigil.toml: {0}")]
     Config(String),
+
+    #[error("{0}")]
+    Registry(#[from] crate::registry::RegistryError),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

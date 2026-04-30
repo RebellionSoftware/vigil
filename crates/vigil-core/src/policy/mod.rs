@@ -214,7 +214,7 @@ mod tests {
         let mut node = make_node(name, version, 30, is_direct);
         node.has_install_script = true;
         let mut scripts = HashMap::new();
-        scripts.insert("postinstall".to_string(), "node setup.js".to_string());
+        scripts.insert("postinstall".to_string(), serde_json::Value::String("node setup.js".to_string()));
         node.metadata.scripts = scripts;
         node.metadata.has_install_script = true;
         node

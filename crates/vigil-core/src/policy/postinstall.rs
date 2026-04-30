@@ -82,7 +82,7 @@ mod tests {
     fn make_node(name: &str, scripts: &[&str], has_install_flag: bool) -> ResolvedNode {
         let mut script_map = HashMap::new();
         for s in scripts {
-            script_map.insert(s.to_string(), "node ./setup.js".to_string());
+            script_map.insert(s.to_string(), serde_json::Value::String("node ./setup.js".to_string()));
         }
         ResolvedNode {
             spec: PackageSpec::new(

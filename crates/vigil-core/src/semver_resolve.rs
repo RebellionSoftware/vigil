@@ -21,6 +21,28 @@ pub fn resolve_version(
             });
     }
 
+    // npm uses `||` for OR ranges: "^4.0.2 || ^5.0 || ^6.0"
+    // Try each alternative and return the highest matching version.
+    if range.contains("||") {
+        let mut best: Option<Version> = None;
+        for alt in range.split("||") {
+            let alt = alt.trim();
+            if let Ok(v_str) = resolve_version(alt, available, allow_prerelease) {
+                if let Ok(v) = Version::parse(&v_str) {
+                    match &best {
+                        None => best = Some(v),
+                        Some(current) if v > *current => best = Some(v),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        return best.map(|v| v.to_string()).ok_or_else(|| RegistryError::NoMatchingVersion {
+            package: String::new(),
+            range: range.to_string(),
+        });
+    }
+
     // npm treats a bare version string (e.g. "1.1.0") as an exact match, but the Rust
     // semver crate parses it as a caret requirement (^1.1.0). Normalize bare versions
     // to "=1.1.0" so they resolve exactly as npm would.
@@ -84,12 +106,22 @@ pub fn resolve_version(
 fn normalize_npm_range(range: &str) -> String {
     let starts_with_op =
         |s: &str| matches!(s.chars().next(), Some('>' | '<' | '=' | '~' | '^'));
+    let starts_with_digit =
+        |s: &str| matches!(s.chars().next(), Some('0'..='9'));
 
     let mut requirements: Vec<String> = Vec::new();
     let mut current = String::new();
 
     for token in range.split_whitespace() {
-        if starts_with_op(token) && !current.is_empty() {
+        // A digit-starting token starts a new requirement only when the accumulator already
+        // contains a version number (i.e. it's a complete constraint like ">=0.5", not a
+        // bare operator like ">=" waiting for its version). This handles ">=0.5 0" → ">=0.5, 0"
+        // without breaking ">= 2.0.0 < 3.0.0" where "2.0.0" belongs to ">=".
+        let current_has_version = current.chars().any(|c| c.is_ascii_digit());
+        let is_new_req = !current.is_empty()
+            && (starts_with_op(token) || (starts_with_digit(token) && current_has_version));
+
+        if is_new_req {
             requirements.push(current.trim().to_string());
             current = token.to_string();
         } else {
@@ -245,6 +277,26 @@ mod tests {
         let versions = &["1.0.0-rc.10", "1.0.0-rc.12", "1.0.0-rc.15"];
         let v = resolve_version("1.0.0-rc.12", versions, false).unwrap();
         assert_eq!(v, "1.0.0-rc.12");
+    }
+
+    #[test]
+    fn bare_version_after_operator_range() {
+        // ">=0.5 0" means ">=0.5 AND 0.x.x" — the bare "0" is a new constraint, not part of >=0.5
+        let versions = &["0.4.0", "0.5.0", "0.6.0", "1.0.0"];
+        let v = resolve_version(">=0.5 0", versions, false).unwrap();
+        assert_eq!(v, "0.6.0");
+    }
+
+    #[test]
+    fn or_range_resolves_to_highest_matching_alternative() {
+        // npm `||` OR syntax: pick highest version matching any alternative
+        let v = resolve_version("^4.0.2 || ^5.0 || ^6.0", VERSIONS, false);
+        // VERSIONS has no 4.x/5.x/6.x, so no match — just verify it doesn't panic/error unexpectedly
+        assert!(v.is_err());
+
+        let versions = &["4.0.1", "4.1.0", "5.2.0", "6.0.0", "7.0.0"];
+        let v = resolve_version("^4.0.2 || ^5.0 || ^6.0", versions, false).unwrap();
+        assert_eq!(v, "6.0.0");
     }
 
     #[test]

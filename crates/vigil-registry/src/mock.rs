@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use async_trait::async_trait;
+use serde_json::Value;
 use vigil_core::registry::{
     DistInfo, PackageMetadata, RegistryClient, RegistryError, RegistryResult, VersionMetadata,
 };
@@ -73,7 +74,7 @@ pub struct PackageMetadataBuilder {
     entries: Vec<(String, String)>, // (published_at, version)
     latest: Option<String>,
     deps_by_version: HashMap<String, HashMap<String, String>>,
-    scripts_by_version: HashMap<String, HashMap<String, String>>,
+    scripts_by_version: HashMap<String, HashMap<String, Value>>,
     has_install_script_by_version: HashMap<String, bool>,
 }
 
@@ -106,7 +107,7 @@ impl PackageMetadataBuilder {
     pub fn with_postinstall(mut self, version: impl Into<String>) -> Self {
         let v = version.into();
         let mut scripts = HashMap::new();
-        scripts.insert("postinstall".to_string(), "node ./setup.js".to_string());
+        scripts.insert("postinstall".to_string(), Value::String("node ./setup.js".to_string()));
         self.scripts_by_version.insert(v, scripts);
         self
     }

@@ -25,6 +25,12 @@ transitive_age_gate = true
 # 0 to disable.
 inactivity_days = 180
 
+# If the dormancy-breaking version is at least this many days old it is considered
+# "settled" and the velocity flag is suppressed. Useful when importing an existing
+# project where many packages broke dormancy in the past but are no longer new.
+# 0 = always flag, regardless of how old the activating version is.
+inactivity_settle_days = 60
+
 # Apply the inactivity check to transitive dependencies as well as directs.
 transitive_velocity_check = true
 

@@ -120,7 +120,10 @@ impl<R: RegistryClient> DependencyResolver<R> {
 
             // Fetch metadata (from cache or registry)
             let metadata = self.fetch_metadata(&name).await
-                .map_err(|e| crate::error::Error::InvalidPackageName(e.to_string()))?;
+                .map_err(|e| match e {
+                    RegistryError::PackageNotFound(pkg) => crate::error::Error::InvalidPackageName(pkg),
+                    other => crate::error::Error::Registry(other),
+                })?;
 
             // Resolve the range to an exact version
             let all_versions: Vec<&str> = metadata.all_versions();
